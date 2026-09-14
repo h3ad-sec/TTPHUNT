@@ -146,9 +146,16 @@ body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
 .tt-search-box input::placeholder{color:var(--dim);}
 .tt-search-box .glyph{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--accent);pointer-events:none;}
 .tt-search-box .glyph svg{width:14px;height:14px;}
-.tt-sidebar-stats{padding:0 14px 12px;font-family:var(--mono);font-size:10.5px;color:var(--dim);flex-shrink:0;}
+.tt-sidebar-stats{padding:0 14px 12px;font-family:var(--mono);font-size:10.5px;color:var(--dim);flex-shrink:0;
+  display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+.tt-tree-actions{display:flex;align-items:center;gap:5px;}
+.tt-tree-actions button{font-family:var(--mono);font-size:9.5px;color:var(--dim);background:transparent;border:none;
+  cursor:pointer;padding:2px 3px;text-decoration:underline;text-decoration-color:transparent;transition:.12s;}
+.tt-tree-actions button:hover{color:var(--accent);text-decoration-color:var(--accent);}
+.tt-tree-actions-sep{color:var(--border-strong);}
 .tt-tree{flex:1;overflow-y:auto;padding:6px 8px 16px;min-height:0;}
-.tt-tactic-group{margin-bottom:4px;}
+.tt-tactic-group{margin-bottom:2px;padding-top:10px;border-top:1px solid var(--border-soft);}
+.tt-tactic-group:first-child{padding-top:0;border-top:none;}
 .tt-tactic-head{display:flex;align-items:center;gap:6px;padding:8px 8px;cursor:pointer;border-radius:5px;
   font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);user-select:none;}
 .tt-tactic-head:hover{color:var(--text-dim);background:rgba(0,212,255,.04);}
@@ -576,7 +583,12 @@ function toggleTheme(){
 var manifest=null;
 var techniqueCache={};   // id -> full technique JSON (with subtechniques[])
 var collapsedTactics={};
-var collapsedTechniques={};
+var expandedTechniques={};
+function isTechniqueExpanded(t){
+  if(expandedTechniques[t.id]!==undefined)return expandedTechniques[t.id];
+  if(searchTerm)return true;
+  return !!(currentView && currentView.techniqueId===t.id);
+}
 var currentView=null;    // {type:'technique'|'sub', techniqueId, subId}
 var searchTerm='';
 var searchIndex={};      // subId -> lowercase searchable blob
@@ -688,7 +700,9 @@ fetch('data/manifest.json').then(function(r){return r.json();}).then(function(m)
 function renderStats(){
   var subCount=0;
   manifest.techniques.forEach(function(t){ subCount+=t.subtechniques.length; });
-  document.getElementById('sidebarStats').textContent=manifest.techniques.length+' technique'+(manifest.techniques.length===1?'':'s')+' · '+subCount+' sub-techniques';
+  var html='<span>'+manifest.techniques.length+' technique'+(manifest.techniques.length===1?'':'s')+' · '+subCount+' sub-techniques</span>';
+  html+='<span class="tt-tree-actions"><button onclick="expandAllTechniques()">Expand all</button><span class="tt-tree-actions-sep">·</span><button onclick="collapseAllTechniques()">Collapse all</button></span>';
+  document.getElementById('sidebarStats').innerHTML=html;
 }
 
 function groupByTactic(){
@@ -722,8 +736,7 @@ function renderTree(){
     visibleTechniques.forEach(function(t){
       var subMatches=t.subtechniques.filter(function(s){ return !searchTerm || matchesSearch(t.id+' '+t.name) || subMatchesSearch(s); });
       var techActive=currentView && currentView.techniqueId===t.id && currentView.type==='technique';
-      var tcCollapsed=collapsedTechniques[t.id]===true || (collapsedTechniques[t.id]===undefined && false);
-      if(searchTerm)tcCollapsed=false;
+      var tcCollapsed=!isTechniqueExpanded(t);
       html+='<div class="tt-technique'+(tcCollapsed?' collapsed':'')+'" data-technique="'+esc(t.id)+'">';
       html+='<div class="tt-technique-head'+(techActive?' active':'')+'">';
       html+='<svg class="tt-technique-caret" onclick="toggleTechnique(event,\''+esc(t.id)+'\')" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg>';
@@ -751,7 +764,17 @@ function toggleTactic(name){
 }
 function toggleTechnique(ev,id){
   ev.stopPropagation();
-  collapsedTechniques[id]=!(collapsedTechniques[id]===true);
+  var t=null;
+  manifest.techniques.forEach(function(x){ if(x.id===id)t=x; });
+  expandedTechniques[id]=t ? !isTechniqueExpanded(t) : true;
+  renderTree();
+}
+function expandAllTechniques(){
+  manifest.techniques.forEach(function(t){ expandedTechniques[t.id]=true; });
+  renderTree();
+}
+function collapseAllTechniques(){
+  manifest.techniques.forEach(function(t){ expandedTechniques[t.id]=false; });
   renderTree();
 }
 function onSearch(){
@@ -780,6 +803,7 @@ function loadTechnique(id){
 
 function selectTechnique(id,opts){
   currentView={type:'technique',techniqueId:id};
+  expandedTechniques[id]=true;
   renderTree();
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('sidebarBackdrop').classList.remove('open');
@@ -790,6 +814,7 @@ function selectTechnique(id,opts){
 
 function selectSub(techId,subId,opts){
   currentView={type:'sub',techniqueId:techId,subId:subId};
+  expandedTechniques[techId]=true;
   renderTree();
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('sidebarBackdrop').classList.remove('open');
