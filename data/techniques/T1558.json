@@ -3,7 +3,11 @@
   "name": "Steal or Forge Kerberos Tickets",
   "tactic": "TA0006",
   "tactic_name": "Credential Access",
-  "platforms": ["Windows", "Linux", "macOS"],
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS"
+  ],
   "mitre_url": "https://attack.mitre.org/techniques/T1558/",
   "overview": "Adversaries subvert Kerberos authentication by stealing or forging tickets to enable Pass the Ticket. Kerberos realms involve three parties — a client, a service, and a Key Distribution Center (KDC) that issues the tickets after authentication. Depending on which credential material an adversary already holds (the krbtgt hash, a service account's hash, or simply the ability to make requests as an authenticated user), they can forge a ticket that impersonates any account, forge one scoped to a single service, brute-force a legitimately-issued ticket offline, or lift a ticket straight out of a running session's credential cache. Windows ships a built-in `klist` utility for listing and inspecting cached Kerberos tickets.",
   "prerequisite_concepts": [
@@ -42,7 +46,9 @@
       "name": "Golden Ticket",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1558/001/",
       "overview": "The krbtgt service account encrypts and signs every Kerberos TGT issued in a domain. An adversary who obtains krbtgt's password hash — typically via T1003.003 (NTDS) or T1003.006 (DCSync) — can forge a TGT for any account, with any group membership, entirely offline: a Golden Ticket. Because the KDC will accept any TGT it can correctly decrypt with krbtgt's key, a forged one is functionally indistinguishable from a real one to the domain controller unless its metadata gives it away.",
       "concepts": [
@@ -60,16 +66,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Ke3chang", "activity": "Used Mimikatz to generate Kerberos golden tickets." },
-        { "actor": "Empire", "activity": "Leverages its integrated Mimikatz implementation to obtain and use golden tickets." },
-        { "actor": "Rubeus", "activity": "Capable of forging ticket-granting tickets given krbtgt's key material." },
-        { "actor": "Sliver", "activity": "Incorporates the Rubeus framework for golden ticket forgery." },
-        { "actor": "Mimikatz", "activity": "kerberos::golden module builds and encrypts a forged TGT from a supplied krbtgt hash." }
+        {
+          "actor": "Ke3chang",
+          "activity": "Used Mimikatz to generate Kerberos golden tickets."
+        },
+        {
+          "actor": "Empire",
+          "activity": "Leverages its integrated Mimikatz implementation to obtain and use golden tickets."
+        },
+        {
+          "actor": "Rubeus",
+          "activity": "Capable of forging ticket-granting tickets given krbtgt's key material."
+        },
+        {
+          "actor": "Sliver",
+          "activity": "Incorporates the Rubeus framework for golden ticket forgery."
+        },
+        {
+          "actor": "Mimikatz",
+          "activity": "kerberos::golden module builds and encrypts a forged TGT from a supplied krbtgt hash."
+        }
       ],
       "data_sources": [
-        { "source": "Security 4769", "detail": "TGS request using a forged TGT — the tell is a 4769 with no corresponding legitimate 4768 for that logon session, or an RC4 (0x17) encryption type in an otherwise AES-enforced domain." },
-        { "source": "Security 4768 / 4770", "detail": "Absence of an expected AS-REQ (4768), or a ticket-renewal (4770) pattern inconsistent with the account's real logon history." },
-        { "source": "Ticket lifetime metadata", "detail": "A validity period far exceeding the domain's configured Maximum Lifetime for User Ticket (default 10 hours) — forging tools default to much longer unless explicitly overridden." }
+        {
+          "source": "Security 4769",
+          "detail": "TGS request using a forged TGT — the tell is a 4769 with no corresponding legitimate 4768 for that logon session, or an RC4 (0x17) encryption type in an otherwise AES-enforced domain."
+        },
+        {
+          "source": "Security 4768 / 4770",
+          "detail": "Absence of an expected AS-REQ (4768), or a ticket-renewal (4770) pattern inconsistent with the account's real logon history."
+        },
+        {
+          "source": "Ticket lifetime metadata",
+          "detail": "A validity period far exceeding the domain's configured Maximum Lifetime for User Ticket (default 10 hours) — forging tools default to much longer unless explicitly overridden."
+        }
       ],
       "detection_queries": [
         {
@@ -96,22 +126,53 @@
         "Hunt for the original T1003.003/T1003.006 event that exposed krbtgt in the first place — the ticket forgery is the payoff, not the root cause"
       ],
       "mitigations": [
-        { "id": "M1015", "name": "Active Directory Configuration", "detail": "Reset the krbtgt password twice to invalidate existing golden tickets; rotate it on a regular schedule (e.g. every 180 days)." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict Domain Admin logons to domain controllers; delegate other admin functions to separate, lower-privilege accounts." }
+        {
+          "id": "M1015",
+          "name": "Active Directory Configuration",
+          "detail": "Reset the krbtgt password twice to invalidate existing golden tickets; rotate it on a regular schedule (e.g. every 180 days)."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Restrict Domain Admin logons to domain controllers; delegate other admin functions to separate, lower-privilege accounts."
+        }
       ],
       "related": [
-        { "id": "T1003.006", "name": "DCSync", "relation": "The usual source of the krbtgt hash a Golden Ticket needs — DCSync pulls it directly via replication, no code execution on a DC required." },
-        { "id": "T1003.003", "name": "NTDS", "relation": "The other common source of krbtgt's hash — extracted from ntds.dit itself rather than over the wire." },
-        { "id": "T1558.002", "name": "Silver Ticket", "relation": "The narrower sibling technique: scoped to one service's hash instead of krbtgt, trading blast radius for stealth since it never touches the KDC." },
-        { "id": "T1550.003", "name": "Pass the Ticket", "external": true, "relation": "The forged TGT is only useful once it's actually injected into a session and used — that reuse step is Pass the Ticket." }
-      ]
+        {
+          "id": "T1003.006",
+          "name": "DCSync",
+          "relation": "The usual source of the krbtgt hash a Golden Ticket needs — DCSync pulls it directly via replication, no code execution on a DC required."
+        },
+        {
+          "id": "T1003.003",
+          "name": "NTDS",
+          "relation": "The other common source of krbtgt's hash — extracted from ntds.dit itself rather than over the wire."
+        },
+        {
+          "id": "T1558.002",
+          "name": "Silver Ticket",
+          "relation": "The narrower sibling technique: scoped to one service's hash instead of krbtgt, trading blast radius for stealth since it never touches the KDC."
+        },
+        {
+          "id": "T1550.003",
+          "name": "Pass the Ticket",
+          "external": true,
+          "relation": "The forged TGT is only useful once it's actually injected into a session and used — that reuse step is Pass the Ticket."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary has forged a Golden Ticket, a Security 4769 (TGS request) will appear with no matching 4768 (TGT request) for that logon session, or with a ticket lifetime far exceeding the domain's configured maximum.",
+        "rationale": "Both signals are structural properties of forgery tooling, not behavioral guesses, so they hold up even against attackers who are otherwise careful about blending in."
+      }
     },
     {
       "id": "T1558.002",
       "name": "Silver Ticket",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1558/002/",
       "overview": "Where a Golden Ticket needs krbtgt's hash, a Silver Ticket only needs one service account's password hash (a SQL Server service account, a SharePoint app pool identity, or a machine account) — typically obtained via OS credential dumping or Kerberoasting. The forged TGS ticket is scoped to whatever that one service can do, which is more limited than a Golden Ticket, but the forgery never involves the KDC at all, so it leaves a much thinner audit trail on the domain controller.",
       "concepts": [
@@ -129,15 +190,36 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "AADInternals", "activity": "Forges Kerberos tickets using the AZUREADSSOACC account hash for hybrid-identity attacks." },
-        { "actor": "Empire", "activity": "Leverages its integrated Mimikatz implementation for silver ticket creation." },
-        { "actor": "Rubeus", "activity": "Generates silver tickets programmatically given a service account's key." },
-        { "actor": "Mimikatz", "activity": "kerberos::golden module (with a service SPN specified) forges a silver ticket the same way it forges golden tickets." }
+        {
+          "actor": "AADInternals",
+          "activity": "Forges Kerberos tickets using the AZUREADSSOACC account hash for hybrid-identity attacks."
+        },
+        {
+          "actor": "Empire",
+          "activity": "Leverages its integrated Mimikatz implementation for silver ticket creation."
+        },
+        {
+          "actor": "Rubeus",
+          "activity": "Generates silver tickets programmatically given a service account's key."
+        },
+        {
+          "actor": "Mimikatz",
+          "activity": "kerberos::golden module (with a service SPN specified) forges a silver ticket the same way it forges golden tickets."
+        }
       ],
       "data_sources": [
-        { "source": "Target service application logs", "detail": "A Kerberos-authenticated session or logon on the target service with no corresponding 4769 on any domain controller in the surrounding window." },
-        { "source": "Security 4624 (target host)", "detail": "Network logon (Type 3) via Kerberos on the service host itself, which is the only place this activity reliably surfaces." },
-        { "source": "Ticket metadata (if captured by EDR/service)", "detail": "PAC (Privilege Attribute Certificate) validation anomalies or a signature that doesn't match the expected KDC validation chain." }
+        {
+          "source": "Target service application logs",
+          "detail": "A Kerberos-authenticated session or logon on the target service with no corresponding 4769 on any domain controller in the surrounding window."
+        },
+        {
+          "source": "Security 4624 (target host)",
+          "detail": "Network logon (Type 3) via Kerberos on the service host itself, which is the only place this activity reliably surfaces."
+        },
+        {
+          "source": "Ticket metadata (if captured by EDR/service)",
+          "detail": "PAC (Privilege Attribute Certificate) validation anomalies or a signature that doesn't match the expected KDC validation chain."
+        }
       ],
       "detection_queries": [
         {
@@ -158,22 +240,52 @@
         "Move the service account to a Group Managed Service Account (gMSA) where possible — its password is long, random, and rotated automatically, which sharply narrows this attack surface going forward"
       ],
       "mitigations": [
-        { "id": "M1041", "name": "Encrypt Sensitive Information", "detail": "Deploy AES Kerberos encryption for service accounts instead of RC4." },
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce strong (25+ character) service account passwords with expiration, or use Group Managed Service Accounts." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict service account privileges and group memberships to the minimum the service actually needs." }
+        {
+          "id": "M1041",
+          "name": "Encrypt Sensitive Information",
+          "detail": "Deploy AES Kerberos encryption for service accounts instead of RC4."
+        },
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce strong (25+ character) service account passwords with expiration, or use Group Managed Service Accounts."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Restrict service account privileges and group memberships to the minimum the service actually needs."
+        }
       ],
       "related": [
-        { "id": "T1558.001", "name": "Golden Ticket", "relation": "The broader sibling technique: forges against krbtgt instead of a single service, trading stealth for domain-wide reach." },
-        { "id": "T1558.003", "name": "Kerberoasting", "relation": "A common source of the service account hash a Silver Ticket needs, if the account wasn't already compromised via OS credential dumping." },
-        { "id": "T1003.002", "name": "Security Account Manager", "relation": "Another common source of a service account's hash when that account is also a local account on the host being targeted." }
-      ]
+        {
+          "id": "T1558.001",
+          "name": "Golden Ticket",
+          "relation": "The broader sibling technique: forges against krbtgt instead of a single service, trading stealth for domain-wide reach."
+        },
+        {
+          "id": "T1558.003",
+          "name": "Kerberoasting",
+          "relation": "A common source of the service account hash a Silver Ticket needs, if the account wasn't already compromised via OS credential dumping."
+        },
+        {
+          "id": "T1003.002",
+          "name": "Security Account Manager",
+          "relation": "Another common source of a service account's hash when that account is also a local account on the host being targeted."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary has forged a Silver Ticket against a specific service, that service will show a Kerberos-authenticated logon with no corresponding 4769 on any domain controller in the same window.",
+        "rationale": "This is an absence-based hypothesis, which is harder to automate than a positive match, so it's best tested by hand against a specific service you already suspect rather than run continuously."
+      }
     },
     {
       "id": "T1558.003",
       "name": "Kerberoasting",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1558/003/",
       "overview": "Any authenticated domain user can request a TGS ticket for any registered Service Principal Name — that's normal Kerberos behavior, not a misconfiguration. When the returned ticket is RC4-encrypted, the encrypted portion is effectively the service account's NTLM hash used as a key, making it crackable offline with no further access to the network required. An attacker just requests tickets for every SPN they can enumerate, takes them offline, and lets a cracking rig grind against them.",
       "concepts": [
@@ -191,16 +303,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Wizard Spider", "activity": "Used Rubeus, Mimikatz's Kerberos module, and the Invoke-Kerberoast cmdlet to steal AES/RC4 service ticket hashes." },
-        { "actor": "APT29 (SolarWinds Compromise)", "activity": "Obtained TGS tickets for Active Directory SPNs to crack offline." },
-        { "actor": "FIN7", "activity": "Employed Invoke-Kerberoast PowerShell commands for credential access and lateral movement." },
-        { "actor": "Impacket", "activity": "GetUserSPNs.py requests and formats service tickets for John the Ripper and Hashcat." },
-        { "actor": "Rubeus", "activity": "kerberoast module requests service tickets for every discoverable SPN and outputs crackable hashes." }
+        {
+          "actor": "Wizard Spider",
+          "activity": "Used Rubeus, Mimikatz's Kerberos module, and the Invoke-Kerberoast cmdlet to steal AES/RC4 service ticket hashes."
+        },
+        {
+          "actor": "APT29 (SolarWinds Compromise)",
+          "activity": "Obtained TGS tickets for Active Directory SPNs to crack offline."
+        },
+        {
+          "actor": "FIN7",
+          "activity": "Employed Invoke-Kerberoast PowerShell commands for credential access and lateral movement."
+        },
+        {
+          "actor": "Impacket",
+          "activity": "GetUserSPNs.py requests and formats service tickets for John the Ripper and Hashcat."
+        },
+        {
+          "actor": "Rubeus",
+          "activity": "kerberoast module requests service tickets for every discoverable SPN and outputs crackable hashes."
+        }
       ],
       "data_sources": [
-        { "source": "Security 4769", "detail": "TGS request with TicketEncryptionType 0x17 (RC4); the signal strengthens sharply when one account requests tickets for many distinct SPNs in a short window." },
-        { "source": "Sysmon 1 / Security 4688", "detail": "Execution of Rubeus, Invoke-Kerberoast, GetUserSPNs.py, or similar tooling, or PowerShell with kerberoast-related cmdlets on the command line." },
-        { "source": "LDAP query volume", "detail": "A burst of LDAP queries enumerating accounts with a servicePrincipalName attribute set, the reconnaissance step that usually precedes the actual ticket requests." }
+        {
+          "source": "Security 4769",
+          "detail": "TGS request with TicketEncryptionType 0x17 (RC4); the signal strengthens sharply when one account requests tickets for many distinct SPNs in a short window."
+        },
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "Execution of Rubeus, Invoke-Kerberoast, GetUserSPNs.py, or similar tooling, or PowerShell with kerberoast-related cmdlets on the command line."
+        },
+        {
+          "source": "LDAP query volume",
+          "detail": "A burst of LDAP queries enumerating accounts with a servicePrincipalName attribute set, the reconnaissance step that usually precedes the actual ticket requests."
+        }
       ],
       "detection_queries": [
         {
@@ -233,22 +369,53 @@
         "Migrate targeted accounts to Group Managed Service Accounts where feasible to remove this attack surface long-term"
       ],
       "mitigations": [
-        { "id": "M1041", "name": "Encrypt Sensitive Information", "detail": "Enable AES Kerberos encryption instead of RC4 wherever possible — this is the mitigation that actually breaks the offline-cracking path." },
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce 25+ character service account passwords with periodic rotation, or use Group Managed Service Accounts / password vaulting." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Keep service accounts out of Domain Admins and limit their privileges to what the service actually needs." }
+        {
+          "id": "M1041",
+          "name": "Encrypt Sensitive Information",
+          "detail": "Enable AES Kerberos encryption instead of RC4 wherever possible — this is the mitigation that actually breaks the offline-cracking path."
+        },
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce 25+ character service account passwords with periodic rotation, or use Group Managed Service Accounts / password vaulting."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Keep service accounts out of Domain Admins and limit their privileges to what the service actually needs."
+        }
       ],
       "related": [
-        { "id": "T1558.004", "name": "AS-REP Roasting", "relation": "The sibling offline-cracking technique: same crackable-Kerberos-material idea, but targets accounts with pre-authentication disabled instead of SPN-bearing service accounts." },
-        { "id": "T1558.002", "name": "Silver Ticket", "relation": "A cracked service account hash from Kerberoasting is exactly the material a Silver Ticket needs to forge access to that same service." },
-        { "id": "T1110.002", "name": "Password Cracking", "external": true, "relation": "The mandatory next step — the captured ticket is useless until the offline cracking actually recovers the password." }
-      ]
+        {
+          "id": "T1558.004",
+          "name": "AS-REP Roasting",
+          "relation": "The sibling offline-cracking technique: same crackable-Kerberos-material idea, but targets accounts with pre-authentication disabled instead of SPN-bearing service accounts."
+        },
+        {
+          "id": "T1558.002",
+          "name": "Silver Ticket",
+          "relation": "A cracked service account hash from Kerberoasting is exactly the material a Silver Ticket needs to forge access to that same service."
+        },
+        {
+          "id": "T1110.002",
+          "name": "Password Cracking",
+          "external": true,
+          "relation": "The mandatory next step — the captured ticket is useless until the offline cracking actually recovers the password."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is Kerberoasting, one account will request RC4-encrypted (0x17) service tickets for an unusually high number of distinct SPNs within a short window.",
+        "rationale": "Legitimate applications rarely request tickets for more than one or two services in quick succession, so the distinct-SPN-count threshold is a strong initial filter."
+      }
     },
     {
       "id": "T1558.004",
       "name": "AS-REP Roasting",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1558/004/",
       "overview": "Accounts configured with Kerberos pre-authentication disabled will respond to an AS-REQ from anyone claiming to be them, with no proof of password knowledge required. The AS-REP that comes back contains a portion encrypted with that account's key — if that key is RC4-derived, it's crackable offline exactly like a Kerberoasted ticket, except the attacker never needed valid credentials to trigger the request in the first place, only the target username.",
       "concepts": [
@@ -262,13 +429,28 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Rubeus", "activity": "asreproast module reveals credentials of accounts that have Kerberos pre-authentication disabled." },
-        { "actor": "Ryuk ransomware operators", "activity": "Used AS-REP Roasting via Rubeus during intrusions documented October–November 2020." }
+        {
+          "actor": "Rubeus",
+          "activity": "asreproast module reveals credentials of accounts that have Kerberos pre-authentication disabled."
+        },
+        {
+          "actor": "Ryuk ransomware operators",
+          "activity": "Used AS-REP Roasting via Rubeus during intrusions documented October–November 2020."
+        }
       ],
       "data_sources": [
-        { "source": "Security 4768", "detail": "AS-REQ / AS-REP exchange with Pre-Authentication Type 0 (or the field blank) — the direct signature of a pre-auth-disabled account being targeted." },
-        { "source": "Security 4769", "detail": "Follow-on TGS activity from the account shortly after, if the cracked password is used to request further access." },
-        { "source": "LDAP query volume", "detail": "Enumeration queries filtering for userAccountControl values with the DONT_REQUIRE_PREAUTH flag set — the reconnaissance step that identifies which accounts are even targetable." }
+        {
+          "source": "Security 4768",
+          "detail": "AS-REQ / AS-REP exchange with Pre-Authentication Type 0 (or the field blank) — the direct signature of a pre-auth-disabled account being targeted."
+        },
+        {
+          "source": "Security 4769",
+          "detail": "Follow-on TGS activity from the account shortly after, if the cracked password is used to request further access."
+        },
+        {
+          "source": "LDAP query volume",
+          "detail": "Enumeration queries filtering for userAccountControl values with the DONT_REQUIRE_PREAUTH flag set — the reconnaissance step that identifies which accounts are even targetable."
+        }
       ],
       "detection_queries": [
         {
@@ -301,28 +483,56 @@
         "Audit the domain for the full population of pre-auth-disabled accounts proactively — don't wait for an attacker to find them first"
       ],
       "mitigations": [
-        { "id": "M1047", "name": "Audit", "detail": "Ensure pre-authentication stays enabled on all accounts by default, and audit any configuration changes to it." },
-        { "id": "M1041", "name": "Encrypt Sensitive Information", "detail": "Deploy AES encryption instead of RC4 for Kerberos operations to raise the cost of offline cracking." },
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce strong, regularly-rotated passwords, or use Group Managed Service Accounts where the account type allows it." }
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Ensure pre-authentication stays enabled on all accounts by default, and audit any configuration changes to it."
+        },
+        {
+          "id": "M1041",
+          "name": "Encrypt Sensitive Information",
+          "detail": "Deploy AES encryption instead of RC4 for Kerberos operations to raise the cost of offline cracking."
+        },
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce strong, regularly-rotated passwords, or use Group Managed Service Accounts where the account type allows it."
+        }
       ],
       "related": [
-        { "id": "T1558.003", "name": "Kerberoasting", "relation": "The sibling offline-cracking technique — same crackable-material idea via the AS exchange instead of the TGS exchange, and needing no valid credentials at all to trigger." },
-        { "id": "T1110.002", "name": "Password Cracking", "external": true, "relation": "The mandatory next step once the AS-REP is captured — it's useless without a successful offline crack." }
-      ]
+        {
+          "id": "T1558.003",
+          "name": "Kerberoasting",
+          "relation": "The sibling offline-cracking technique — same crackable-material idea via the AS exchange instead of the TGS exchange, and needing no valid credentials at all to trigger."
+        },
+        {
+          "id": "T1110.002",
+          "name": "Password Cracking",
+          "external": true,
+          "relation": "The mandatory next step once the AS-REP is captured — it's useless without a successful offline crack."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is AS-REP Roasting, a 4768 (AS-REQ) will show Pre-Authentication Type 0 for an account, meaning pre-auth was not required.",
+        "rationale": "This hypothesis doesn't even require the attacker to have valid credentials to test -- it's purely about which accounts are configured without pre-auth, which you can and should audit proactively rather than wait to observe in logs."
+      }
     },
     {
       "id": "T1558.005",
       "name": "Ccache Files",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Linux", "macOS"],
+      "platforms": [
+        "Linux",
+        "macOS"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1558/005/",
       "overview": "On Linux and macOS, an authenticated Kerberos session's tickets live in a credential cache (ccache) file so the user isn't re-prompted for every service they touch. On Linux these are typically in /tmp, named krb5cc_<UID> or krb5.ccache; macOS keeps an equivalent in memory under an API:{uuid} scheme. An adversary who can read another user's ccache — usually as root, or via the same user context — can lift its tickets directly and reuse them (Pass the Ticket), or convert them to Windows format with tools like Kekeo for cross-platform lateral movement.",
       "concepts": [
         {
           "term": "Why the credential cache exists at all",
           "explanation": "Kerberos's whole value proposition is single sign-on: authenticate once, then present tickets instead of a password for every subsequent service. The ccache file is simply where that session's tickets are held so `kinit` doesn't have to run again for each connection. It is functionally the Linux/macOS analogue of what the Windows LSASS process holds in memory for T1003.001 — a live session's usable credential material sitting in one place."
-          },
+        },
         {
           "term": "Why file permissions are the whole defense",
           "explanation": "A ccache file is normally readable only by the owning user (or root). There's no additional encryption protecting it at rest beyond standard filesystem permissions — so root access on a multi-user host, a misconfigured shared /tmp, or a privilege-escalation bug that grants read access to another user's files is sufficient to lift their live Kerberos session wholesale, no password or hash cracking required at all."
@@ -333,12 +543,24 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Impacket", "activity": "getST.py and ticketer.py can steal or forge Kerberos tickets using ccache files given a password, hash, aesKey, or TGT." }
+        {
+          "actor": "Impacket",
+          "activity": "getST.py and ticketer.py can steal or forge Kerberos tickets using ccache files given a password, hash, aesKey, or TGT."
+        }
       ],
       "data_sources": [
-        { "source": "auditd", "detail": "File read/copy access to /tmp/krb5cc_* or any path referenced by the KRB5CCNAME environment variable, by a process other than the owning user's normal session." },
-        { "source": "auditd", "detail": "Execution of klist, kinit with an unusual KRB5CCNAME override, or ticket-conversion tooling like Kekeo." },
-        { "source": "SSSD/Kerberos logs", "detail": "Ticket reuse from a source context inconsistent with the original session (different host, different process tree) shortly after a ccache file was accessed." }
+        {
+          "source": "auditd",
+          "detail": "File read/copy access to /tmp/krb5cc_* or any path referenced by the KRB5CCNAME environment variable, by a process other than the owning user's normal session."
+        },
+        {
+          "source": "auditd",
+          "detail": "Execution of klist, kinit with an unusual KRB5CCNAME override, or ticket-conversion tooling like Kekeo."
+        },
+        {
+          "source": "SSSD/Kerberos logs",
+          "detail": "Ticket reuse from a source context inconsistent with the original session (different host, different process tree) shortly after a ccache file was accessed."
+        }
       ],
       "detection_queries": [
         {
@@ -365,13 +587,34 @@
         "If tickets were converted for cross-platform reuse (Kekeo), extend the hunt to Windows-side logon events for the same account"
       ],
       "mitigations": [
-        { "id": "M1047", "name": "Audit", "detail": "Enable auditd scans of hash/ticket/tmp file access; disable Kerberos in sssd/Vintela configurations where it isn't actually needed." },
-        { "id": "M1043", "name": "Credential Access Protection", "detail": "Use SELinux to define entry points, process types, and file labels that restrict which processes can read ccache files." }
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Enable auditd scans of hash/ticket/tmp file access; disable Kerberos in sssd/Vintela configurations where it isn't actually needed."
+        },
+        {
+          "id": "M1043",
+          "name": "Credential Access Protection",
+          "detail": "Use SELinux to define entry points, process types, and file labels that restrict which processes can read ccache files."
+        }
       ],
       "related": [
-        { "id": "T1003.001", "name": "LSASS Memory", "relation": "The closest Windows analogue: both target a live session's already-usable credential material sitting in one place, rather than a database that has to be decrypted first." },
-        { "id": "T1550.003", "name": "Pass the Ticket", "external": true, "relation": "The direct next step once a ticket is lifted from the ccache — reusing it without re-authenticating." }
-      ]
+        {
+          "id": "T1003.001",
+          "name": "LSASS Memory",
+          "relation": "The closest Windows analogue: both target a live session's already-usable credential material sitting in one place, rather than a database that has to be decrypted first."
+        },
+        {
+          "id": "T1550.003",
+          "name": "Pass the Ticket",
+          "external": true,
+          "relation": "The direct next step once a ticket is lifted from the ccache — reusing it without re-authenticating."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is stealing Kerberos tickets from a Linux/macOS session, a process other than the owning user will read a krb5cc_* file in /tmp or a KRB5CCNAME-referenced path.",
+        "rationale": "Ownership mismatch is the cleanest signal here since legitimate ccache access is almost always by the session's own user or root-level system services like SSSD."
+      }
     }
   ]
 }

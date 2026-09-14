@@ -247,6 +247,17 @@ body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
 .tt-section-title::after{content:'';flex:1;height:1px;background:var(--border);}
 .tt-prose{font-size:13.5px;color:var(--text-dim);line-height:1.75;}
 
+.tt-hyp-card{--pack-rgb:0,212,255;position:relative;margin-top:26px;padding:16px 18px 16px 20px;border-radius:9px;
+  background:linear-gradient(135deg,rgba(var(--pack-rgb),.09),rgba(var(--pack-rgb),.02));
+  border:1px solid rgba(var(--pack-rgb),.3);border-left:3px solid rgb(var(--pack-rgb));}
+.tt-hyp-label{font-family:var(--mono);font-size:10px;letter-spacing:2px;text-transform:uppercase;
+  color:rgb(var(--pack-rgb));font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.tt-hyp-label::before{content:'?';display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+  border-radius:50%;border:1px solid rgb(var(--pack-rgb));font-size:10px;line-height:1;}
+.tt-hyp-statement{font-size:14px;color:var(--text);line-height:1.65;font-weight:500;}
+.tt-hyp-rationale{margin-top:10px;padding-top:10px;border-top:1px solid rgba(var(--pack-rgb),.2);
+  font-size:12px;color:var(--text-dim);line-height:1.6;}
+
 .tt-concept-grid{display:flex;flex-direction:column;gap:10px;}
 .tt-concept-card{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:var(--panel-alt);}
 .tt-concept-term{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);margin-bottom:5px;}
@@ -350,7 +361,7 @@ body.light .tt-query-pre{color:#0d3a5c;}
    instead of wrapping, on any screen size but especially narrow ones. */
 .tt-prose,.tt-concept-exp,.tt-concept-term,.tt-proc-activity,.tt-proc-actor,.tt-ds-detail,.tt-ds-source,
 .tt-query-desc,.tt-fp-item,.tt-check-text,.tt-mit-detail,.tt-mit-name,.tt-related-why,.tt-related-name,
-.tt-hunt-desc,.tt-empty p,.tt-crumb{overflow-wrap:break-word;word-break:break-word;}
+.tt-hunt-desc,.tt-empty p,.tt-crumb,.tt-hyp-statement,.tt-hyp-rationale{overflow-wrap:break-word;word-break:break-word;}
 
 @media print{
   .nav,.nav-drawer,.tt-sidebar,.tt-sidebar-backdrop,.tt-sidebar-toggle,.tracer-footer,
@@ -993,6 +1004,10 @@ function exportMarkdown(techId,subId){
     md+='## How It Works\n\n';
     sub.concepts.forEach(function(c){ md+='**'+mdEsc(c.term)+'**  \n'+mdEsc(c.explanation)+'\n\n'; });
   }
+  if(sub.hypothesis&&sub.hypothesis.statement){
+    md+='## Hunting Hypothesis\n\n> '+mdEsc(sub.hypothesis.statement)+'\n\n';
+    if(sub.hypothesis.rationale)md+=mdEsc(sub.hypothesis.rationale)+'\n\n';
+  }
   if(sub.procedure_examples&&sub.procedure_examples.length){
     md+='## Procedure Examples\n\n';
     sub.procedure_examples.forEach(function(p){ md+='- **'+mdEsc(p.actor)+'** — '+mdEsc(p.activity)+'\n'; });
@@ -1071,6 +1086,14 @@ function renderSubDetail(full,sub){
       html+='<div class="tt-concept-card"><div class="tt-concept-term">'+esc(c.term)+'</div><div class="tt-concept-exp">'+esc(c.explanation)+'</div></div>';
     });
     html+='</div></div>';
+  }
+
+  if(sub.hypothesis && sub.hypothesis.statement){
+    html+='<div class="tt-hyp-card" style="--pack-rgb:'+rgb+'">';
+    html+='<div class="tt-hyp-label">Hunting Hypothesis</div>';
+    html+='<div class="tt-hyp-statement">'+esc(sub.hypothesis.statement)+'</div>';
+    if(sub.hypothesis.rationale)html+='<div class="tt-hyp-rationale">'+esc(sub.hypothesis.rationale)+'</div>';
+    html+='</div>';
   }
 
   if(sub.procedure_examples && sub.procedure_examples.length){

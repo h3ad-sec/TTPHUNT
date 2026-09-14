@@ -3,7 +3,16 @@
   "name": "Remote Services",
   "tactic": "TA0008",
   "tactic_name": "Lateral Movement",
-  "platforms": ["Windows", "Linux", "macOS", "ESXi", "IaaS", "Identity Provider", "SaaS", "Office Suite"],
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "ESXi",
+    "IaaS",
+    "Identity Provider",
+    "SaaS",
+    "Office Suite"
+  ],
   "mitre_url": "https://attack.mitre.org/techniques/T1021/",
   "overview": "Adversaries use valid accounts to authenticate to services that support remote connections — RDP, SMB, SSH, VNC, WinRM, DCOM, and their cloud equivalents — and once inside, use the built-in legitimate remote-access functionality of the operating system or cloud platform itself to move from host to host. This is the direct payoff of T1078: valid accounts establish that a credential works, T1021 is what an attacker actually does with network reach and that credential in hand. The 8 sub-techniques below split by protocol, not by sophistication — which one gets used is almost always a question of what's already open on the target, not which is more advanced.",
   "prerequisite_concepts": [
@@ -30,7 +39,9 @@
       "name": "Remote Desktop Protocol",
       "tactic": "TA0008",
       "tactic_name": "Lateral Movement",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1021/001/",
       "overview": "RDP (Microsoft's Remote Desktop Services) gives an authenticated user a full interactive graphical session on a remote Windows host, using whatever privileges that account holds. Because it hands over a complete desktop rather than just command execution, it's one of the highest-capability lateral movement paths in this pack — and one of the most dangerous to expose directly to the internet, which is exactly what a large share of real-world ransomware intrusions still find open.",
       "concepts": [
@@ -44,16 +55,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Wizard Spider", "activity": "Leveraged RDP for lateral movement and ransomware deployment." },
-        { "actor": "Volt Typhoon", "activity": "Accessed domain controllers via RDP using compromised administrative privileges." },
-        { "actor": "APT28 (Nearest Neighbor Campaign)", "activity": "Deployed RDP for lateral movement during the campaign." },
-        { "actor": "APT41", "activity": "Moved laterally via RDP and exposed RDP ports using the NATBypass tool." },
-        { "actor": "ServHelper", "activity": "Includes commands for adding RDP users and establishing reverse SSH tunneling." }
+        {
+          "actor": "Wizard Spider",
+          "activity": "Leveraged RDP for lateral movement and ransomware deployment."
+        },
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Accessed domain controllers via RDP using compromised administrative privileges."
+        },
+        {
+          "actor": "APT28 (Nearest Neighbor Campaign)",
+          "activity": "Deployed RDP for lateral movement during the campaign."
+        },
+        {
+          "actor": "APT41",
+          "activity": "Moved laterally via RDP and exposed RDP ports using the NATBypass tool."
+        },
+        {
+          "actor": "ServHelper",
+          "activity": "Includes commands for adding RDP users and establishing reverse SSH tunneling."
+        }
       ],
       "data_sources": [
-        { "source": "Security 4624 (LogonType 10)", "detail": "RemoteInteractive logon — the core RDP session-establishment signal." },
-        { "source": "Security 4778 / 4779", "detail": "Session reconnected / disconnected events, useful for tracking a session's full lifetime including hijacked or resumed sessions." },
-        { "source": "Sysmon 3 / firewall logs", "detail": "Inbound TCP 3389 connections, especially from an external IP if RDP is (or shouldn't be) internet-facing." }
+        {
+          "source": "Security 4624 (LogonType 10)",
+          "detail": "RemoteInteractive logon — the core RDP session-establishment signal."
+        },
+        {
+          "source": "Security 4778 / 4779",
+          "detail": "Session reconnected / disconnected events, useful for tracking a session's full lifetime including hijacked or resumed sessions."
+        },
+        {
+          "source": "Sysmon 3 / firewall logs",
+          "detail": "Inbound TCP 3389 connections, especially from an external IP if RDP is (or shouldn't be) internet-facing."
+        }
       ],
       "detection_queries": [
         {
@@ -80,22 +115,52 @@
         "If RDP is internet-exposed, treat closing that exposure as the immediate priority alongside the specific incident response"
       ],
       "mitigations": [
-        { "id": "M1030", "name": "Network Segmentation", "detail": "Block RDP from internet exposure; restrict traffic between security zones." },
-        { "id": "M1035", "name": "Limit Access to Resource Over Network", "detail": "Deploy remote desktop gateways to restrict and centralize RDP access." },
-        { "id": "M1032", "name": "Multi-Factor Authentication", "detail": "Require MFA for remote login attempts." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Remove local Administrators from the RDP-allowed group where not required." }
+        {
+          "id": "M1030",
+          "name": "Network Segmentation",
+          "detail": "Block RDP from internet exposure; restrict traffic between security zones."
+        },
+        {
+          "id": "M1035",
+          "name": "Limit Access to Resource Over Network",
+          "detail": "Deploy remote desktop gateways to restrict and centralize RDP access."
+        },
+        {
+          "id": "M1032",
+          "name": "Multi-Factor Authentication",
+          "detail": "Require MFA for remote login attempts."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Remove local Administrators from the RDP-allowed group where not required."
+        }
       ],
       "related": [
-        { "id": "T1078.002", "name": "Domain Accounts", "relation": "The credential source that makes RDP lateral movement possible in the first place." },
-        { "id": "T1021.005", "name": "VNC", "relation": "The other GUI-based remote access path; attackers reach for whichever is already available on the target." }
-      ]
+        {
+          "id": "T1078.002",
+          "name": "Domain Accounts",
+          "relation": "The credential source that makes RDP lateral movement possible in the first place."
+        },
+        {
+          "id": "T1021.005",
+          "name": "VNC",
+          "relation": "The other GUI-based remote access path; attackers reach for whichever is already available on the target."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is moving laterally via RDP, a Security 4624 LogonType 10 (RemoteInteractive) event will appear for an account or at a time inconsistent with that account's established pattern.",
+        "rationale": "LogonType 10 is specific enough to RDP that the hypothesis can be tested directly without needing additional correlation, though it should be scoped against a source-IP allowlist for known jump hosts."
+      }
     },
     {
       "id": "T1021.002",
       "name": "SMB/Windows Admin Shares",
       "tactic": "TA0008",
       "tactic_name": "Lateral Movement",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1021/002/",
       "overview": "Every Windows host exposes hidden administrative shares (C$, ADMIN$, IPC$) by default, reachable over SMB by anyone in the local Administrators group. Adversaries authenticate to these shares with valid credentials to copy files, then pair that file transfer with a second mechanism — a Scheduled Task, a Service, or WMI — to actually trigger execution, which is exactly what tools like PsExec and Impacket's smbexec automate end to end.",
       "concepts": [
@@ -109,16 +174,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "APT3", "activity": "Copied files to ADMIN$ shares for lateral movement." },
-        { "actor": "Wizard Spider", "activity": "Dropped a Cobalt Strike Beacon on domain controllers via SMB." },
-        { "actor": "Lazarus Group", "activity": "Accessed the ADMIN$ share via SMB for lateral movement." },
-        { "actor": "Sandworm Team", "activity": "Utilized net use commands to connect to network shares." },
-        { "actor": "Emotet", "activity": "Leverages Admin$, C$, and IPC$ shares for propagation." }
+        {
+          "actor": "APT3",
+          "activity": "Copied files to ADMIN$ shares for lateral movement."
+        },
+        {
+          "actor": "Wizard Spider",
+          "activity": "Dropped a Cobalt Strike Beacon on domain controllers via SMB."
+        },
+        {
+          "actor": "Lazarus Group",
+          "activity": "Accessed the ADMIN$ share via SMB for lateral movement."
+        },
+        {
+          "actor": "Sandworm Team",
+          "activity": "Utilized net use commands to connect to network shares."
+        },
+        {
+          "actor": "Emotet",
+          "activity": "Leverages Admin$, C$, and IPC$ shares for propagation."
+        }
       ],
       "data_sources": [
-        { "source": "Security 5140 / 5145", "detail": "Network share object access, specifically to ADMIN$, C$, or IPC$ from a source host that isn't a known management/deployment system." },
-        { "source": "Sysmon 11 (FileCreate)", "detail": "File creation over the network onto ADMIN$/C$, especially of an executable, immediately followed by a service or scheduled task referencing that same file." },
-        { "source": "Security 7045 / 4698", "detail": "New service (7045) or scheduled task (4698) creation shortly after SMB file transfer — the execution-trigger half of this two-step pattern." }
+        {
+          "source": "Security 5140 / 5145",
+          "detail": "Network share object access, specifically to ADMIN$, C$, or IPC$ from a source host that isn't a known management/deployment system."
+        },
+        {
+          "source": "Sysmon 11 (FileCreate)",
+          "detail": "File creation over the network onto ADMIN$/C$, especially of an executable, immediately followed by a service or scheduled task referencing that same file."
+        },
+        {
+          "source": "Security 7045 / 4698",
+          "detail": "New service (7045) or scheduled task (4698) creation shortly after SMB file transfer — the execution-trigger half of this two-step pattern."
+        }
       ],
       "detection_queries": [
         {
@@ -145,22 +234,52 @@
         "Remove the malicious service/task and any dropped binaries; verify no additional persistence was staged in the same session"
       ],
       "mitigations": [
-        { "id": "M1037", "name": "Filter Network Traffic", "detail": "Restrict SMB communications using host firewall rules." },
-        { "id": "M1035", "name": "Limit Access to Resource Over Network", "detail": "Disable Windows administrative shares where not operationally required." },
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce non-reusable, complex local admin passwords (LAPS)." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Deny remote use of local admin credentials; restrict local admin group membership." }
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Restrict SMB communications using host firewall rules."
+        },
+        {
+          "id": "M1035",
+          "name": "Limit Access to Resource Over Network",
+          "detail": "Disable Windows administrative shares where not operationally required."
+        },
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce non-reusable, complex local admin passwords (LAPS)."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Deny remote use of local admin credentials; restrict local admin group membership."
+        }
       ],
       "related": [
-        { "id": "T1078.003", "name": "Local Accounts", "relation": "Reused local admin passwords are a common credential source for admin-share access across many hosts." },
-        { "id": "T1003.002", "name": "Security Account Manager", "relation": "Where the local admin hash enabling this access is usually obtained." }
-      ]
+        {
+          "id": "T1078.003",
+          "name": "Local Accounts",
+          "relation": "Reused local admin passwords are a common credential source for admin-share access across many hosts."
+        },
+        {
+          "id": "T1003.002",
+          "name": "Security Account Manager",
+          "relation": "Where the local admin hash enabling this access is usually obtained."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is moving laterally via admin shares, an executable will be written to ADMIN$ or C$ over SMB, followed within minutes by a new service or scheduled task referencing that same file.",
+        "rationale": "Testing for the pairing (file write plus execution trigger) rather than the SMB write alone is what separates this from routine deployment-tooling activity."
+      }
     },
     {
       "id": "T1021.003",
       "name": "Distributed Component Object Model",
       "tactic": "TA0008",
       "tactic_name": "Lateral Movement",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1021/003/",
       "overview": "DCOM extends Windows' Component Object Model over RPC, letting a client invoke methods on objects hosted on a remote machine. By default only administrators can remotely activate and launch COM objects, but a privileged user can leverage insecure methods on remotely-instantiated Office application objects to run macros, invoke Dynamic Data Exchange, or drive WMI — achieving code execution on a remote host without ever dropping a file to disk.",
       "concepts": [
@@ -174,14 +293,32 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Cobalt Strike", "activity": "Delivers Beacon payloads for lateral movement by leveraging remote COM execution." },
-        { "actor": "Empire", "activity": "Utilizes Invoke-DCOM to leverage remote COM execution for lateral movement." },
-        { "actor": "SILENTTRINITY", "activity": "Uses System namespace methods to execute lateral movement via DCOM." }
+        {
+          "actor": "Cobalt Strike",
+          "activity": "Delivers Beacon payloads for lateral movement by leveraging remote COM execution."
+        },
+        {
+          "actor": "Empire",
+          "activity": "Utilizes Invoke-DCOM to leverage remote COM execution for lateral movement."
+        },
+        {
+          "actor": "SILENTTRINITY",
+          "activity": "Uses System namespace methods to execute lateral movement via DCOM."
+        }
       ],
       "data_sources": [
-        { "source": "Network / RPC traffic", "detail": "Inbound TCP 135 (RPC endpoint mapper) followed by activity on a dynamically assigned high port, the DCOM activation signature." },
-        { "source": "Sysmon 1 / Security 4688", "detail": "Office application processes (excel.exe, winword.exe) or mmc.exe/wmiprvse.exe spawning unexpectedly, with a remote-originated parent chain." },
-        { "source": "Registry (offline forensics)", "detail": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Classes\\AppID and HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Ole permission changes, which govern who can remotely launch/access COM objects." }
+        {
+          "source": "Network / RPC traffic",
+          "detail": "Inbound TCP 135 (RPC endpoint mapper) followed by activity on a dynamically assigned high port, the DCOM activation signature."
+        },
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "Office application processes (excel.exe, winword.exe) or mmc.exe/wmiprvse.exe spawning unexpectedly, with a remote-originated parent chain."
+        },
+        {
+          "source": "Registry (offline forensics)",
+          "detail": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Classes\\AppID and HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Ole permission changes, which govern who can remotely launch/access COM objects."
+        }
       ],
       "detection_queries": [
         {
@@ -202,21 +339,49 @@
         "Review whether Windows Firewall's default DCOM block was disabled or an exception was added that shouldn't exist"
       ],
       "mitigations": [
-        { "id": "M1048", "name": "Application Isolation and Sandboxing", "detail": "Enable COM alerts and Protected View in Office." },
-        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Disable DCOM via Dcomcnfg.exe where not required." },
-        { "id": "M1030", "name": "Network Segmentation", "detail": "Enable Windows Firewall, which blocks DCOM by default." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict registry-based COM/DCOM launch and access permissions to the accounts that actually need them." }
+        {
+          "id": "M1048",
+          "name": "Application Isolation and Sandboxing",
+          "detail": "Enable COM alerts and Protected View in Office."
+        },
+        {
+          "id": "M1042",
+          "name": "Disable or Remove Feature or Program",
+          "detail": "Disable DCOM via Dcomcnfg.exe where not required."
+        },
+        {
+          "id": "M1030",
+          "name": "Network Segmentation",
+          "detail": "Enable Windows Firewall, which blocks DCOM by default."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Restrict registry-based COM/DCOM launch and access permissions to the accounts that actually need them."
+        }
       ],
       "related": [
-        { "id": "T1059.005", "name": "Visual Basic", "relation": "The macro/DDE payload a remotely-instantiated Office COM object is often used to trigger." }
-      ]
+        {
+          "id": "T1059.005",
+          "name": "Visual Basic",
+          "relation": "The macro/DDE payload a remotely-instantiated Office COM object is often used to trigger."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is using DCOM for lateral movement, inbound RPC traffic on TCP 135 will be followed by an Office application process spawning without its normal explorer.exe-launched parent lineage.",
+        "rationale": "The network-level RPC signature plus the abnormal process lineage together are more specific than either alone."
+      }
     },
     {
       "id": "T1021.004",
       "name": "SSH",
       "tactic": "TA0008",
       "tactic_name": "Lateral Movement",
-      "platforms": ["Linux", "macOS", "ESXi"],
+      "platforms": [
+        "Linux",
+        "macOS",
+        "ESXi"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1021/004/",
       "overview": "SSH ships on nearly every Linux and macOS system and can be enabled on ESXi hosts directly or via vCenter, giving an authenticated user a command-line session on the remote host with whatever privileges that account holds. Because SSH is the standard, expected admin tool on these platforms — unlike RDP on Windows, which ordinary users rarely touch — an SSH-based lateral movement session carries very little inherent suspicion on its own.",
       "concepts": [
@@ -230,16 +395,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Scattered Spider", "activity": "Employed SSH for lateral movement and vSphere vCenter GUI access." },
-        { "actor": "APT5", "activity": "Used SSH to traverse compromised environments and access ESXi hosts." },
-        { "actor": "Lazarus Group", "activity": "Used SSH and PuTTY's PSCP utility to access restricted network segments." },
-        { "actor": "Salt Typhoon", "activity": "Modified switch loopback addresses as SSH connection sources to bypass ACLs." },
-        { "actor": "Kinsing", "activity": "Leveraged SSH for lateral movement across compromised cloud/container environments." }
+        {
+          "actor": "Scattered Spider",
+          "activity": "Employed SSH for lateral movement and vSphere vCenter GUI access."
+        },
+        {
+          "actor": "APT5",
+          "activity": "Used SSH to traverse compromised environments and access ESXi hosts."
+        },
+        {
+          "actor": "Lazarus Group",
+          "activity": "Used SSH and PuTTY's PSCP utility to access restricted network segments."
+        },
+        {
+          "actor": "Salt Typhoon",
+          "activity": "Modified switch loopback addresses as SSH connection sources to bypass ACLs."
+        },
+        {
+          "actor": "Kinsing",
+          "activity": "Leveraged SSH for lateral movement across compromised cloud/container environments."
+        }
       ],
       "data_sources": [
-        { "source": "auth.log / secure (Linux)", "detail": "SSH logon events, especially for accounts or from sources inconsistent with that account's normal pattern; password-based auth where key-based is expected." },
-        { "source": "ESXi shell.log + auth.log", "detail": "SSH-based shell access on ESXi hosts, correlated with the commands run once connected." },
-        { "source": "macOS Unified Logs", "detail": "SSH logons via Remote Login, correlated with subsequent process activity." }
+        {
+          "source": "auth.log / secure (Linux)",
+          "detail": "SSH logon events, especially for accounts or from sources inconsistent with that account's normal pattern; password-based auth where key-based is expected."
+        },
+        {
+          "source": "ESXi shell.log + auth.log",
+          "detail": "SSH-based shell access on ESXi hosts, correlated with the commands run once connected."
+        },
+        {
+          "source": "macOS Unified Logs",
+          "detail": "SSH logons via Remote Login, correlated with subsequent process activity."
+        }
       ],
       "detection_queries": [
         {
@@ -266,21 +455,49 @@
         "On ESXi, correlate shell.log with auth.log to confirm which authenticated session issued which commands"
       ],
       "mitigations": [
-        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Disable the SSH daemon on non-essential systems, particularly ESXi servers where not required." },
-        { "id": "M1032", "name": "Multi-factor Authentication", "detail": "Require MFA for SSH connections, such as password-protected SSH keys." },
-        { "id": "M1018", "name": "User Account Management", "detail": "Restrict SSH login permissions to the specific accounts that need them." }
+        {
+          "id": "M1042",
+          "name": "Disable or Remove Feature or Program",
+          "detail": "Disable the SSH daemon on non-essential systems, particularly ESXi servers where not required."
+        },
+        {
+          "id": "M1032",
+          "name": "Multi-factor Authentication",
+          "detail": "Require MFA for SSH connections, such as password-protected SSH keys."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict SSH login permissions to the specific accounts that need them."
+        }
       ],
       "related": [
-        { "id": "T1059.004", "name": "Unix Shell", "relation": "The interactive shell an SSH session hands the attacker once authenticated." },
-        { "id": "T1059.012", "name": "Hypervisor CLI", "relation": "On ESXi specifically, SSH access is the usual entry point before esxcli/vim-cmd abuse." }
-      ]
+        {
+          "id": "T1059.004",
+          "name": "Unix Shell",
+          "relation": "The interactive shell an SSH session hands the attacker once authenticated."
+        },
+        {
+          "id": "T1059.012",
+          "name": "Hypervisor CLI",
+          "relation": "On ESXi specifically, SSH access is the usual entry point before esxcli/vim-cmd abuse."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is moving laterally via SSH, a session will authenticate from a source outside the known admin/jump-host allowlist, or password-based root authentication will succeed where key-based auth is expected.",
+        "rationale": "SSH usage itself is too routine to hunt on directly -- the hypothesis has to be anchored on source, account, or auth-method anomalies specifically."
+      }
     },
     {
       "id": "T1021.005",
       "name": "VNC",
       "tactic": "TA0008",
       "tactic_name": "Lateral Movement",
-      "platforms": ["Windows", "Linux", "macOS"],
+      "platforms": [
+        "Windows",
+        "Linux",
+        "macOS"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1021/005/",
       "overview": "VNC (Virtual Network Computing, using the RFB protocol) is screen-sharing rather than a full remote session negotiation — it mirrors an existing display rather than creating a new one the way RDP does. Since it isn't installed by default on Windows, VNC-based lateral movement often starts with the attacker dropping their own VNC server (TightVNC, UltraVNC) onto the target, which shifts the detection question toward \"why does unexpected VNC server software exist here\" rather than \"is a built-in feature being abused.\"",
       "concepts": [
@@ -294,16 +511,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "FIN7", "activity": "Deploys TightVNC for control of compromised hosts." },
-        { "actor": "Fox Kitten", "activity": "Installs TightVNC server/client on compromised infrastructure for lateral movement." },
-        { "actor": "TrickBot", "activity": "Implements a VNC module for victim monitoring and network reconnaissance." },
-        { "actor": "Gamaredon Group", "activity": "Utilizes UltraVNC and other VNC tools for interactive host engagement." },
-        { "actor": "GCMAN", "activity": "Employs VNC for lateral movement operations." }
+        {
+          "actor": "FIN7",
+          "activity": "Deploys TightVNC for control of compromised hosts."
+        },
+        {
+          "actor": "Fox Kitten",
+          "activity": "Installs TightVNC server/client on compromised infrastructure for lateral movement."
+        },
+        {
+          "actor": "TrickBot",
+          "activity": "Implements a VNC module for victim monitoring and network reconnaissance."
+        },
+        {
+          "actor": "Gamaredon Group",
+          "activity": "Utilizes UltraVNC and other VNC tools for interactive host engagement."
+        },
+        {
+          "actor": "GCMAN",
+          "activity": "Employs VNC for lateral movement operations."
+        }
       ],
       "data_sources": [
-        { "source": "Sysmon 1 / Security 4688", "detail": "Execution of known VNC server binaries (tvnserver.exe, winvnc.exe, uvnc-related processes) not part of the standard software inventory." },
-        { "source": "Network / firewall logs", "detail": "Traffic on default VNC ports 5900 (server), 5800 (browser-based), or 5500 (listening mode), especially inbound from an unexpected source." },
-        { "source": "macOS Unified Logs", "detail": "screensharingd activity correlated with a concurrent remote logon, the macOS built-in VNC-compatible screen sharing mechanism." }
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "Execution of known VNC server binaries (tvnserver.exe, winvnc.exe, uvnc-related processes) not part of the standard software inventory."
+        },
+        {
+          "source": "Network / firewall logs",
+          "detail": "Traffic on default VNC ports 5900 (server), 5800 (browser-based), or 5500 (listening mode), especially inbound from an unexpected source."
+        },
+        {
+          "source": "macOS Unified Logs",
+          "detail": "screensharingd activity correlated with a concurrent remote logon, the macOS built-in VNC-compatible screen sharing mechanism."
+        }
       ],
       "detection_queries": [
         {
@@ -324,21 +565,47 @@
         "Audit the broader environment for the same software across other hosts using the same installer/hash"
       ],
       "mitigations": [
-        { "id": "M1047", "name": "Audit", "detail": "Inventory systems for unauthorized VNC server installations." },
-        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Uninstall unnecessary VNC server software." },
-        { "id": "M1037", "name": "Filter Network Traffic", "detail": "Block default VNC ports (5900, 5800, 5500) at the network boundary." },
-        { "id": "M1033", "name": "Limit Software Installation", "detail": "Restrict VNC installation privileges to required user groups only." }
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Inventory systems for unauthorized VNC server installations."
+        },
+        {
+          "id": "M1042",
+          "name": "Disable or Remove Feature or Program",
+          "detail": "Uninstall unnecessary VNC server software."
+        },
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Block default VNC ports (5900, 5800, 5500) at the network boundary."
+        },
+        {
+          "id": "M1033",
+          "name": "Limit Software Installation",
+          "detail": "Restrict VNC installation privileges to required user groups only."
+        }
       ],
       "related": [
-        { "id": "T1021.001", "name": "Remote Desktop Protocol", "relation": "The other GUI-based lateral movement path; attackers pick whichever is available on the target." }
-      ]
+        {
+          "id": "T1021.001",
+          "name": "Remote Desktop Protocol",
+          "relation": "The other GUI-based lateral movement path; attackers pick whichever is available on the target."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is using VNC for lateral movement, a VNC server binary (tvnserver.exe, winvnc.exe, uvnc-related processes) will execute on a host with no approved VNC software in its inventory.",
+        "rationale": "Because Windows has no built-in VNC server, the mere presence of one is frequently the entire signal, which makes this one of the higher-confidence hypotheses in the pack."
+      }
     },
     {
       "id": "T1021.006",
       "name": "Windows Remote Management",
       "tactic": "TA0008",
       "tactic_name": "Lateral Movement",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1021/006/",
       "overview": "WinRM is the Windows service and protocol that underlies PowerShell Remoting — Invoke-Command and Enter-PSSession use it by default — letting an authenticated user execute programs, modify the registry, manage services, and drive WMI on a remote host. Because it's PowerShell's own remoting mechanism, \"PowerShell Remoting abuse\" and \"WinRM abuse\" describe the exact same activity from two different angles.",
       "concepts": [
@@ -352,16 +619,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "APT29 (SolarWinds Compromise)", "activity": "Executed commands and payloads using PowerShell over WinRM." },
-        { "actor": "Storm-0501", "activity": "Deployed the Evil-WinRM tool for PowerShell-based remote code execution." },
-        { "actor": "Wizard Spider", "activity": "Conducted lateral movement via Windows Remote Management." },
-        { "actor": "Chimera", "activity": "Utilized WinRM to move laterally across networks." },
-        { "actor": "Cobalt Strike", "activity": "Executes payloads on remote hosts via WinRM." }
+        {
+          "actor": "APT29 (SolarWinds Compromise)",
+          "activity": "Executed commands and payloads using PowerShell over WinRM."
+        },
+        {
+          "actor": "Storm-0501",
+          "activity": "Deployed the Evil-WinRM tool for PowerShell-based remote code execution."
+        },
+        {
+          "actor": "Wizard Spider",
+          "activity": "Conducted lateral movement via Windows Remote Management."
+        },
+        {
+          "actor": "Chimera",
+          "activity": "Utilized WinRM to move laterally across networks."
+        },
+        {
+          "actor": "Cobalt Strike",
+          "activity": "Executes payloads on remote hosts via WinRM."
+        }
       ],
       "data_sources": [
-        { "source": "WinRM Operational log, Event 91", "detail": "\"Creating WSMan shell on server\" — logged on the target host for every successful remote WinRM connection." },
-        { "source": "Sysmon 1", "detail": "Child processes spawned under wsmprovhost.exe, especially cmd.exe, powershell.exe, or other unexpected tooling." },
-        { "source": "Security 5156", "detail": "Allowed network connections on ports 5985 (HTTP) or 5986 (HTTPS), the WinRM listener ports." }
+        {
+          "source": "WinRM Operational log, Event 91",
+          "detail": "\"Creating WSMan shell on server\" — logged on the target host for every successful remote WinRM connection."
+        },
+        {
+          "source": "Sysmon 1",
+          "detail": "Child processes spawned under wsmprovhost.exe, especially cmd.exe, powershell.exe, or other unexpected tooling."
+        },
+        {
+          "source": "Security 5156",
+          "detail": "Allowed network connections on ports 5985 (HTTP) or 5986 (HTTPS), the WinRM listener ports."
+        }
       ],
       "detection_queries": [
         {
@@ -388,20 +679,45 @@
         "Confirm whether WinRM is exposed beyond what's operationally necessary and tighten firewall rules on 5985/5986 accordingly"
       ],
       "mitigations": [
-        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Deactivate the WinRM service entirely where not required." },
-        { "id": "M1030", "name": "Network Segmentation", "detail": "Restrict WinRM access to specific devices via firewall rules; isolate critical systems." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Use dedicated, limited-permission WinRM accounts for critical enclaves rather than broad admin credentials." }
+        {
+          "id": "M1042",
+          "name": "Disable or Remove Feature or Program",
+          "detail": "Deactivate the WinRM service entirely where not required."
+        },
+        {
+          "id": "M1030",
+          "name": "Network Segmentation",
+          "detail": "Restrict WinRM access to specific devices via firewall rules; isolate critical systems."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Use dedicated, limited-permission WinRM accounts for critical enclaves rather than broad admin credentials."
+        }
       ],
       "related": [
-        { "id": "T1059.001", "name": "PowerShell", "relation": "WinRM is the transport PowerShell Remoting (Invoke-Command, Enter-PSSession) actually runs over." }
-      ]
+        {
+          "id": "T1059.001",
+          "name": "PowerShell",
+          "relation": "WinRM is the transport PowerShell Remoting (Invoke-Command, Enter-PSSession) actually runs over."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is moving laterally via WinRM, a suspicious child process (cmd.exe, powershell.exe, or unexpected tooling) will be spawned under wsmprovhost.exe.",
+        "rationale": "wsmprovhost.exe as a parent is close to a single-process fingerprint for this entire technique, so a hit here warrants prompt investigation rather than broad tuning."
+      }
     },
     {
       "id": "T1021.007",
       "name": "Cloud Services",
       "tactic": "TA0008",
       "tactic_name": "Lateral Movement",
-      "platforms": ["IaaS", "Identity Provider", "SaaS", "Office Suite"],
+      "platforms": [
+        "IaaS",
+        "Identity Provider",
+        "SaaS",
+        "Office Suite"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1021/007/",
       "overview": "A synced or federated identity works against cloud consoles and CLIs (Azure PowerShell's Connect-AzAccount, Microsoft Graph's Connect-MgGraph, gcloud auth login) exactly the way it works on-premises, which means an attacker with valid cloud credentials can move from one cloud service to another — or from an on-prem foothold straight into cloud infrastructure — without needing any network adjacency to the target at all.",
       "concepts": [
@@ -415,15 +731,36 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "APT29", "activity": "Leveraged compromised high-privileged on-premises accounts synced to Office 365 for lateral cloud movement via Azure AD PowerShell." },
-        { "actor": "Scattered Spider", "activity": "Used Azure credentials for lateral movement and exploited pre-existing AWS EC2 instances." },
-        { "actor": "Storm-0501", "activity": "Utilized a compromised Entra Connect Sync Server for environment-wide lateral movement." },
-        { "actor": "Mini Shai-Hulud", "activity": "Accessed and propagated to AWS EC2 instances via SSM Send-Command." }
+        {
+          "actor": "APT29",
+          "activity": "Leveraged compromised high-privileged on-premises accounts synced to Office 365 for lateral cloud movement via Azure AD PowerShell."
+        },
+        {
+          "actor": "Scattered Spider",
+          "activity": "Used Azure credentials for lateral movement and exploited pre-existing AWS EC2 instances."
+        },
+        {
+          "actor": "Storm-0501",
+          "activity": "Utilized a compromised Entra Connect Sync Server for environment-wide lateral movement."
+        },
+        {
+          "actor": "Mini Shai-Hulud",
+          "activity": "Accessed and propagated to AWS EC2 instances via SSM Send-Command."
+        }
       ],
       "data_sources": [
-        { "source": "Azure AD / Entra sign-in logs", "detail": "Atypical geolocation or user-agent cloud logins followed immediately by resource or directory enumeration." },
-        { "source": "Cloud audit logs (CloudTrail / Azure Activity / GCP Audit)", "detail": "CLI-based authentication (Connect-AzAccount, gcloud auth login) from an unexpected source, correlated with the API calls that follow." },
-        { "source": "M365 / Google Workspace audit logs", "detail": "Mailbox or document access via CLI/API from a source inconsistent with that user's normal client application pattern." }
+        {
+          "source": "Azure AD / Entra sign-in logs",
+          "detail": "Atypical geolocation or user-agent cloud logins followed immediately by resource or directory enumeration."
+        },
+        {
+          "source": "Cloud audit logs (CloudTrail / Azure Activity / GCP Audit)",
+          "detail": "CLI-based authentication (Connect-AzAccount, gcloud auth login) from an unexpected source, correlated with the API calls that follow."
+        },
+        {
+          "source": "M365 / Google Workspace audit logs",
+          "detail": "Mailbox or document access via CLI/API from a source inconsistent with that user's normal client application pattern."
+        }
       ],
       "detection_queries": [
         {
@@ -444,20 +781,42 @@
         "If Entra Connect or an equivalent sync service was involved, treat both cloud and on-premises environments as potentially affected"
       ],
       "mitigations": [
-        { "id": "M1032", "name": "Multi-factor Authentication", "detail": "Apply MFA across all cloud services, including CLI-based authentication paths." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Prevent on-premises accounts from holding cloud permissions directly; use isolated cloud-only administrative accounts." }
+        {
+          "id": "M1032",
+          "name": "Multi-factor Authentication",
+          "detail": "Apply MFA across all cloud services, including CLI-based authentication paths."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Prevent on-premises accounts from holding cloud permissions directly; use isolated cloud-only administrative accounts."
+        }
       ],
       "related": [
-        { "id": "T1078.004", "name": "Cloud Accounts", "relation": "The credential compromise that makes this lateral movement path possible." },
-        { "id": "T1059.009", "name": "Cloud API", "relation": "The same CLI/API surface, viewed from the execution angle rather than the movement angle." }
-      ]
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "relation": "The credential compromise that makes this lateral movement path possible."
+        },
+        {
+          "id": "T1059.009",
+          "name": "Cloud API",
+          "relation": "The same CLI/API surface, viewed from the execution angle rather than the movement angle."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is using a federated identity to move laterally between cloud services, a CLI-based cloud sign-in (Connect-AzAccount, Connect-MgGraph, gcloud auth login) will occur from a location or client pattern inconsistent with that identity's history.",
+        "rationale": "Because there's no network path to observe here the way there is for on-prem lateral movement, cloud audit logs are the only realistic place to test this hypothesis."
+      }
     },
     {
       "id": "T1021.008",
       "name": "Direct Cloud VM Connections",
       "tactic": "TA0008",
       "tactic_name": "Lateral Movement",
-      "platforms": ["IaaS"],
+      "platforms": [
+        "IaaS"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1021/008/",
       "overview": "Cloud providers offer native, out-of-band ways to reach a VM's console directly — Azure Serial Console, AWS EC2 Instance Connect, AWS Systems Manager — that bypass the VM's actual network interface entirely, connecting through the cloud provider's own management plane instead. Several of these mechanisms are built for break-glass recovery scenarios and grant SYSTEM or root access by default, which means compromising the cloud identity that can invoke them is equivalent to already having full administrative access to the VM.",
       "concepts": [
@@ -471,11 +830,20 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Scattered Spider", "activity": "Leveraged SaaS and cloud environment access as part of broader cloud-native intrusion operations, consistent with abuse of native cloud VM connection methods." }
+        {
+          "actor": "Scattered Spider",
+          "activity": "Leveraged SaaS and cloud environment access as part of broader cloud-native intrusion operations, consistent with abuse of native cloud VM connection methods."
+        }
       ],
       "data_sources": [
-        { "source": "Cloud audit logs (CloudTrail / Azure Activity)", "detail": "Invocation of EC2 Instance Connect, Systems Manager Send-Command/Session, or Azure Serial Console access, correlated with the IAM identity that triggered it." },
-        { "source": "IAM policy / role activity", "detail": "Permissions changes granting an identity access to these direct-connect features, which is itself worth monitoring as a precursor." }
+        {
+          "source": "Cloud audit logs (CloudTrail / Azure Activity)",
+          "detail": "Invocation of EC2 Instance Connect, Systems Manager Send-Command/Session, or Azure Serial Console access, correlated with the IAM identity that triggered it."
+        },
+        {
+          "source": "IAM policy / role activity",
+          "detail": "Permissions changes granting an identity access to these direct-connect features, which is itself worth monitoring as a precursor."
+        }
       ],
       "detection_queries": [
         {
@@ -496,12 +864,28 @@
         "Check CloudTrail/Activity logs for what commands were run during the session"
       ],
       "mitigations": [
-        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Deactivate direct VM connection features when not administratively necessary." },
-        { "id": "M1018", "name": "User Account Management", "detail": "Restrict IAM permissions for these native access methods to the minimum set of identities that require them." }
+        {
+          "id": "M1042",
+          "name": "Disable or Remove Feature or Program",
+          "detail": "Deactivate direct VM connection features when not administratively necessary."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict IAM permissions for these native access methods to the minimum set of identities that require them."
+        }
       ],
       "related": [
-        { "id": "T1078.004", "name": "Cloud Accounts", "relation": "The IAM identity compromise that grants the permission to invoke these direct connection features in the first place." }
-      ]
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "relation": "The IAM identity compromise that grants the permission to invoke these direct connection features in the first place."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is using a native cloud VM connection feature, CloudTrail/Activity logs will show EC2 Instance Connect, Systems Manager Send-Command/Start-Session, or Azure Serial Console invocation by an identity outside the expected automation/break-glass list.",
+        "rationale": "Given these features often grant SYSTEM/root by default, any unexpected invocation should be treated as equivalent to full VM compromise rather than triaged as a lower-severity lead."
+      }
     }
   ]
 }

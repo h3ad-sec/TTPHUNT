@@ -3,7 +3,11 @@
   "name": "OS Credential Dumping",
   "tactic": "TA0006",
   "tactic_name": "Credential Access",
-  "platforms": ["Windows", "Linux", "macOS"],
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS"
+  ],
   "mitre_url": "https://attack.mitre.org/techniques/T1003/",
   "overview": "Adversaries attempt to extract credentials from operating system caches, memory, or on-disk data structures such as the SAM database, LSASS process memory, or the Active Directory database (NTDS.dit). Credentials are typically recovered in hash or plaintext form and used for lateral movement, privilege escalation, or persistence via pass-the-hash, pass-the-ticket, or offline cracking. Each sub-technique below targets a distinct extraction surface: process memory, an on-disk credential database, a registry secret store, or the flat credential files that mirror these same primitives on Linux.",
   "prerequisite_concepts": [
@@ -54,7 +58,9 @@
       "name": "LSASS Memory",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1003/001/",
       "overview": "The Local Security Authority Subsystem Service (LSASS) holds credential material generated during user logon in process memory. With administrative or SYSTEM-level access, an adversary can open a handle to lsass.exe and either harvest credentials in-memory or dump the process to disk for offline analysis with tools like Mimikatz. Common execution paths include Mimikatz's sekurlsa module, SysInternals-style procdump, the built-in comsvcs.dll MiniDump export invoked through rundll32.exe, and abuse of Windows Error Reporting (Silent Process Exit) to trigger a crash dump of LSASS on demand.",
       "concepts": [
@@ -80,17 +86,44 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "Sandworm Team", "activity": "Used the plainpwd Mimikatz variant and rundll32.exe + comsvcs.dll to dump LSASS." },
-        { "actor": "HAFNIUM", "activity": "Deployed procdump against Exchange servers to harvest credentials post-compromise." },
-        { "actor": "Volt Typhoon", "activity": "Targeted hashed credentials from LSASS memory as part of a living-off-the-land intrusion set." },
-        { "actor": "Cobalt Strike", "activity": "Injects into or reads LSASS memory to extract password hashes via its built-in Mimikatz integration." },
-        { "actor": "Mimikatz", "activity": "sekurlsa::Minidump and sekurlsa::logonPasswords modules parse LSASS memory for plaintext credentials and hashes." }
+        {
+          "actor": "Sandworm Team",
+          "activity": "Used the plainpwd Mimikatz variant and rundll32.exe + comsvcs.dll to dump LSASS."
+        },
+        {
+          "actor": "HAFNIUM",
+          "activity": "Deployed procdump against Exchange servers to harvest credentials post-compromise."
+        },
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Targeted hashed credentials from LSASS memory as part of a living-off-the-land intrusion set."
+        },
+        {
+          "actor": "Cobalt Strike",
+          "activity": "Injects into or reads LSASS memory to extract password hashes via its built-in Mimikatz integration."
+        },
+        {
+          "actor": "Mimikatz",
+          "activity": "sekurlsa::Minidump and sekurlsa::logonPasswords modules parse LSASS memory for plaintext credentials and hashes."
+        }
       ],
       "data_sources": [
-        { "source": "Sysmon 10 (ProcessAccess)", "detail": "TargetImage = lsass.exe with a GrantedAccess mask indicative of full or memory-read rights (e.g. 0x1010, 0x1410, 0x1fffff, 0x143a)." },
-        { "source": "Security 4656 / 4663", "detail": "Handle requested / object access attempt on lsass.exe — requires object-level SACL auditing enabled on the process, not on by default." },
-        { "source": "Sysmon 1 / Security 4688", "detail": "Process creation for rundll32.exe with comsvcs.dll and MiniDump on the command line, procdump.exe, or Task Manager's dump-file helper." },
-        { "source": "Sysmon 11 (FileCreate)", "detail": ".dmp / .mdmp file creation in non-standard paths shortly after a LSASS handle event." }
+        {
+          "source": "Sysmon 10 (ProcessAccess)",
+          "detail": "TargetImage = lsass.exe with a GrantedAccess mask indicative of full or memory-read rights (e.g. 0x1010, 0x1410, 0x1fffff, 0x143a)."
+        },
+        {
+          "source": "Security 4656 / 4663",
+          "detail": "Handle requested / object access attempt on lsass.exe — requires object-level SACL auditing enabled on the process, not on by default."
+        },
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "Process creation for rundll32.exe with comsvcs.dll and MiniDump on the command line, procdump.exe, or Task Manager's dump-file helper."
+        },
+        {
+          "source": "Sysmon 11 (FileCreate)",
+          "detail": ".dmp / .mdmp file creation in non-standard paths shortly after a LSASS handle event."
+        }
       ],
       "detection_queries": [
         {
@@ -119,9 +152,23 @@
         }
       ],
       "related": [
-        { "id": "T1003.004", "name": "LSA Secrets", "relation": "Both surface SSP-managed or LSA-managed secrets from the same host; if LSASS memory access is blocked by PPL, LSA Secrets registry export is a common fallback path." },
-        { "id": "T1558.003", "name": "Kerberoasting", "external": true, "relation": "A frequent follow-on once an attacker has working credentials: request service tickets for offline cracking rather than touching LSASS again." },
-        { "id": "T1550.002", "name": "Pass the Hash", "external": true, "relation": "The direct next step once an NTLM hash is recovered from LSASS — reusing it without ever cracking the plaintext." }
+        {
+          "id": "T1003.004",
+          "name": "LSA Secrets",
+          "relation": "Both surface SSP-managed or LSA-managed secrets from the same host; if LSASS memory access is blocked by PPL, LSA Secrets registry export is a common fallback path."
+        },
+        {
+          "id": "T1558.003",
+          "name": "Kerberoasting",
+          "external": true,
+          "relation": "A frequent follow-on once an attacker has working credentials: request service tickets for offline cracking rather than touching LSASS again."
+        },
+        {
+          "id": "T1550.002",
+          "name": "Pass the Hash",
+          "external": true,
+          "relation": "The direct next step once an NTLM hash is recovered from LSASS — reusing it without ever cracking the plaintext."
+        }
       ],
       "false_positives": [
         "EDR/AV engines and Windows Error Reporting (WerFault.exe) legitimately open handles to lsass.exe with lower access rights during normal operation",
@@ -136,17 +183,35 @@
         "Pivot on the tool's hash/behavior to hunt for the same activity across the rest of the estate"
       ],
       "mitigations": [
-        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Enable Attack Surface Reduction rules that block credential-stealing from LSASS." },
-        { "id": "M1043", "name": "Credential Access Protection", "detail": "Enable Credential Guard (Windows 10/Server 2016+) to isolate LSA secrets; note hardware/firmware prerequisites." },
-        { "id": "M1025", "name": "Privileged Process Integrity", "detail": "Enable Protected Process Light (PPL) for LSA on Windows 8.1/Server 2012 R2 and newer." }
-      ]
+        {
+          "id": "M1040",
+          "name": "Behavior Prevention on Endpoint",
+          "detail": "Enable Attack Surface Reduction rules that block credential-stealing from LSASS."
+        },
+        {
+          "id": "M1043",
+          "name": "Credential Access Protection",
+          "detail": "Enable Credential Guard (Windows 10/Server 2016+) to isolate LSA secrets; note hardware/firmware prerequisites."
+        },
+        {
+          "id": "M1025",
+          "name": "Privileged Process Integrity",
+          "detail": "Enable Protected Process Light (PPL) for LSA on Windows 8.1/Server 2012 R2 and newer."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is dumping LSASS memory on this host, a non-standard process will hold an open handle to lsass.exe with memory-read access rights (Sysmon 10 GrantedAccess like 0x1010/0x1fffff), often followed by a .dmp file write or a rundll32.exe -> comsvcs.dll command line.",
+        "rationale": "This is testable against telemetry most Windows fleets already collect, and the known-good caller list (AV/EDR engines, WerFault) is short enough to keep false positives manageable."
+      }
     },
     {
       "id": "T1003.002",
       "name": "Security Account Manager",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1003/002/",
       "overview": "The SAM database holds local account credentials, normally enumerable only via APIs like net user. With SYSTEM-level access an adversary can extract it in-memory or export the underlying registry hives (HKLM\\SAM, HKLM\\SYSTEM) with reg save for offline parsing by tools such as Creddump7. Local RID 500 is the built-in Administrator, RID 501 is Guest, and RID 1000+ are regular local accounts — the values attackers are actually after.",
       "concepts": [
@@ -164,16 +229,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "APT28", "activity": "Executed reg save against SAM, SYSTEM, and SECURITY hives during the Nearest Neighbor campaign." },
-        { "actor": "Wizard Spider", "activity": "Acquired credentials from the SAM and SECURITY registry hives." },
-        { "actor": "CrackMapExec", "activity": "Dumps usernames and hashed passwords directly from SAM." },
-        { "actor": "Impacket (secretsdump.py)", "activity": "Extracts SAM hashes both locally and remotely via registry hive retrieval." },
-        { "actor": "IceApple", "activity": "Credential Dumper module reads encrypted password hashes from HKLM\\SAM\\SAM\\Domains\\Account\\F and the Users subkeys." }
+        {
+          "actor": "APT28",
+          "activity": "Executed reg save against SAM, SYSTEM, and SECURITY hives during the Nearest Neighbor campaign."
+        },
+        {
+          "actor": "Wizard Spider",
+          "activity": "Acquired credentials from the SAM and SECURITY registry hives."
+        },
+        {
+          "actor": "CrackMapExec",
+          "activity": "Dumps usernames and hashed passwords directly from SAM."
+        },
+        {
+          "actor": "Impacket (secretsdump.py)",
+          "activity": "Extracts SAM hashes both locally and remotely via registry hive retrieval."
+        },
+        {
+          "actor": "IceApple",
+          "activity": "Credential Dumper module reads encrypted password hashes from HKLM\\SAM\\SAM\\Domains\\Account\\F and the Users subkeys."
+        }
       ],
       "data_sources": [
-        { "source": "Security 4656 / 4663", "detail": "Handle/access events on HKLM\\SAM — requires SACL auditing configured on the hive, not default." },
-        { "source": "Sysmon 1 / Security 4688", "detail": "reg.exe with save and a target of hklm\\sam, hklm\\system, or hklm\\security on the command line." },
-        { "source": "Sysmon 11 (FileCreate)", "detail": ".save / .hiv / .dmp files created by reg.exe or a copy command shortly after the reg save." }
+        {
+          "source": "Security 4656 / 4663",
+          "detail": "Handle/access events on HKLM\\SAM — requires SACL auditing configured on the hive, not default."
+        },
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "reg.exe with save and a target of hklm\\sam, hklm\\system, or hklm\\security on the command line."
+        },
+        {
+          "source": "Sysmon 11 (FileCreate)",
+          "detail": ".save / .hiv / .dmp files created by reg.exe or a copy command shortly after the reg save."
+        }
       ],
       "detection_queries": [
         {
@@ -196,8 +285,17 @@
         }
       ],
       "related": [
-        { "id": "T1003.004", "name": "LSA Secrets", "relation": "Extracted via the same reg save + boot-key pattern; attackers commonly grab both hives in the same pass." },
-        { "id": "T1550.002", "name": "Pass the Hash", "external": true, "relation": "Local NTLM hashes pulled from SAM are unsalted and directly reusable via pass-the-hash against hosts sharing the same local admin password." }
+        {
+          "id": "T1003.004",
+          "name": "LSA Secrets",
+          "relation": "Extracted via the same reg save + boot-key pattern; attackers commonly grab both hives in the same pass."
+        },
+        {
+          "id": "T1550.002",
+          "name": "Pass the Hash",
+          "external": true,
+          "relation": "Local NTLM hashes pulled from SAM are unsalted and directly reusable via pass-the-hash against hosts sharing the same local admin password."
+        }
       ],
       "false_positives": [
         "Scheduled backup/imaging jobs (Windows Server Backup, third-party agents) that export registry hives as part of routine system-state backup",
@@ -210,17 +308,35 @@
         "Search for follow-on pass-the-hash using the extracted local hashes against other hosts"
       ],
       "mitigations": [
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce complex, unique local administrator passwords per host." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Avoid placing domain accounts in local administrator groups." },
-        { "id": "M1028", "name": "Operating System Configuration", "detail": "Disable or restrict NTLM where feasible." }
-      ]
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce complex, unique local administrator passwords per host."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Avoid placing domain accounts in local administrator groups."
+        },
+        {
+          "id": "M1028",
+          "name": "Operating System Configuration",
+          "detail": "Disable or restrict NTLM where feasible."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is extracting the local SAM database, reg.exe will run with a save argument targeting hklm\\sam/system/security, producing a .save/.hiv file shortly afterward.",
+        "rationale": "The reg save plus hive-name pattern is specific enough that a match is worth investigating immediately rather than needing further correlation."
+      }
     },
     {
       "id": "T1003.003",
       "name": "NTDS",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1003/003/",
       "overview": "NTDS.dit, normally at %SystemRoot%\\NTDS\\Ntds.dit on a domain controller, is the Active Directory database and holds credential material for every domain account. Adversaries extract it via ntdsutil.exe's Install From Media (IFM) function, by creating a Volume Shadow Copy of the DC's volume and lifting the file directly, or remotely via Impacket's secretsdump.py over the DRSUAPI replication interface (which overlaps functionally with DCSync).",
       "concepts": [
@@ -242,16 +358,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "LAPSUS$", "activity": "Used the built-in ntdsutil.exe to extract the AD database." },
-        { "actor": "Scattered Spider", "activity": "Extracted NTDS.dit by creating volume shadow copies of virtual domain controller disks." },
-        { "actor": "APT28", "activity": "Used ntdsutil.exe and vssadmin-created shadow copies during the Nearest Neighbor campaign." },
-        { "actor": "Volt Typhoon", "activity": "Used ntdsutil to build DC installation media containing usernames and hashes." },
-        { "actor": "Impacket (secretsdump.py)", "activity": "Dumps NTDS.dit contents remotely via the DRSUAPI interface or from an offline copy." }
+        {
+          "actor": "LAPSUS$",
+          "activity": "Used the built-in ntdsutil.exe to extract the AD database."
+        },
+        {
+          "actor": "Scattered Spider",
+          "activity": "Extracted NTDS.dit by creating volume shadow copies of virtual domain controller disks."
+        },
+        {
+          "actor": "APT28",
+          "activity": "Used ntdsutil.exe and vssadmin-created shadow copies during the Nearest Neighbor campaign."
+        },
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Used ntdsutil to build DC installation media containing usernames and hashes."
+        },
+        {
+          "actor": "Impacket (secretsdump.py)",
+          "activity": "Dumps NTDS.dit contents remotely via the DRSUAPI interface or from an offline copy."
+        }
       ],
       "data_sources": [
-        { "source": "Sysmon 1 / Security 4688", "detail": "ntdsutil.exe with \"ac i ntds\" / \"ifm\" arguments, or vssadmin.exe create shadow, or esentutl.exe invoked against the NTDS volume." },
-        { "source": "Security 4663", "detail": "File access events on %SystemRoot%\\NTDS\\ntds.dit — requires object auditing on the file, not default." },
-        { "source": "Sysmon 11 (FileCreate)", "detail": "ntds.dit / ntds.jfm copies appearing outside the NTDS service folder." }
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "ntdsutil.exe with \"ac i ntds\" / \"ifm\" arguments, or vssadmin.exe create shadow, or esentutl.exe invoked against the NTDS volume."
+        },
+        {
+          "source": "Security 4663",
+          "detail": "File access events on %SystemRoot%\\NTDS\\ntds.dit — requires object auditing on the file, not default."
+        },
+        {
+          "source": "Sysmon 11 (FileCreate)",
+          "detail": "ntds.dit / ntds.jfm copies appearing outside the NTDS service folder."
+        }
       ],
       "detection_queries": [
         {
@@ -274,8 +414,17 @@
         }
       ],
       "related": [
-        { "id": "T1003.006", "name": "DCSync", "relation": "The same domain-wide credential exposure reached through a different path — file-based extraction here versus a live replication call." },
-        { "id": "T1558.001", "name": "Golden Ticket", "external": true, "relation": "Once krbtgt's hash is recovered from ntds.dit, forging domain-wide Kerberos tickets is the direct next step." }
+        {
+          "id": "T1003.006",
+          "name": "DCSync",
+          "relation": "The same domain-wide credential exposure reached through a different path — file-based extraction here versus a live replication call."
+        },
+        {
+          "id": "T1558.001",
+          "name": "Golden Ticket",
+          "external": true,
+          "relation": "Once krbtgt's hash is recovered from ntds.dit, forging domain-wide Kerberos tickets is the direct next step."
+        }
       ],
       "false_positives": [
         "Scheduled DC backup jobs that use VSS — filter by the known backup service account and schedule",
@@ -288,17 +437,35 @@
         "Hunt for Golden Ticket usage following the dump — abnormal or long-lived Kerberos TGTs are the follow-on signal"
       ],
       "mitigations": [
-        { "id": "M1041", "name": "Encrypt Sensitive Information", "detail": "Secure domain controller backups so an extracted image doesn't hand over ntds.dit in the clear." },
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce complex, unique local administrator passwords." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict who can log on interactively to domain controllers." }
-      ]
+        {
+          "id": "M1041",
+          "name": "Encrypt Sensitive Information",
+          "detail": "Secure domain controller backups so an extracted image doesn't hand over ntds.dit in the clear."
+        },
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce complex, unique local administrator passwords."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Restrict who can log on interactively to domain controllers."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is extracting ntds.dit from a domain controller, ntdsutil.exe or vssadmin.exe will run with ifm/create shadow arguments outside a scheduled backup window.",
+        "rationale": "Legitimate DC-level use of these tools is rare and usually scheduled, so an unscheduled hit is high-confidence."
+      }
     },
     {
       "id": "T1003.004",
       "name": "LSA Secrets",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1003/004/",
       "overview": "LSA Secrets, stored under HKEY_LOCAL_MACHINE\\SECURITY\\Policy\\Secrets, hold credential material Windows itself needs at boot before a user logs on — commonly service account passwords, scheduled task run-as credentials, and cached RDP/auto-logon passwords. SYSTEM-level access lets an adversary export the key with reg.exe or pull it from memory with Mimikatz's lsadump::secrets.",
       "concepts": [
@@ -316,16 +483,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "APT29", "activity": "Used reg save for offline LSA secret extraction." },
-        { "actor": "LaZagne", "activity": "Harvests credentials directly from LSA secrets." },
-        { "actor": "Impacket (SecretsDump module)", "activity": "Obtains account and password information from LSA secrets." },
-        { "actor": "Threat Group-3390", "activity": "Used gsecdump to dump LSA secrets and domain controller credentials." },
-        { "actor": "AADInternals", "activity": "Dumps secrets from the Local Security Authority, including hybrid-identity-relevant material." }
+        {
+          "actor": "APT29",
+          "activity": "Used reg save for offline LSA secret extraction."
+        },
+        {
+          "actor": "LaZagne",
+          "activity": "Harvests credentials directly from LSA secrets."
+        },
+        {
+          "actor": "Impacket (SecretsDump module)",
+          "activity": "Obtains account and password information from LSA secrets."
+        },
+        {
+          "actor": "Threat Group-3390",
+          "activity": "Used gsecdump to dump LSA secrets and domain controller credentials."
+        },
+        {
+          "actor": "AADInternals",
+          "activity": "Dumps secrets from the Local Security Authority, including hybrid-identity-relevant material."
+        }
       ],
       "data_sources": [
-        { "source": "Security 4656 / 4663", "detail": "Handle/access events on HKLM\\SECURITY\\Policy\\Secrets — requires a SACL on the key." },
-        { "source": "Sysmon 1 / Security 4688", "detail": "reg.exe save targeting hklm\\security, or execution of LaZagne / gsecdump / Mimikatz." },
-        { "source": "Sysmon 10 (ProcessAccess)", "detail": "Mimikatz reading LSA secrets in-process alongside its usual LSASS memory access." }
+        {
+          "source": "Security 4656 / 4663",
+          "detail": "Handle/access events on HKLM\\SECURITY\\Policy\\Secrets — requires a SACL on the key."
+        },
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "reg.exe save targeting hklm\\security, or execution of LaZagne / gsecdump / Mimikatz."
+        },
+        {
+          "source": "Sysmon 10 (ProcessAccess)",
+          "detail": "Mimikatz reading LSA secrets in-process alongside its usual LSASS memory access."
+        }
       ],
       "detection_queries": [
         {
@@ -348,8 +539,16 @@
         }
       ],
       "related": [
-        { "id": "T1003.001", "name": "LSASS Memory", "relation": "Both draw on LSASS-managed material and the SYSTEM-hive boot key; often dumped in the same pass as LSASS memory." },
-        { "id": "T1003.002", "name": "Security Account Manager", "relation": "Shares the reg save + boot-key decryption pattern used against the SAM hive." }
+        {
+          "id": "T1003.001",
+          "name": "LSASS Memory",
+          "relation": "Both draw on LSASS-managed material and the SYSTEM-hive boot key; often dumped in the same pass as LSASS memory."
+        },
+        {
+          "id": "T1003.002",
+          "name": "Security Account Manager",
+          "relation": "Shares the reg save + boot-key decryption pattern used against the SAM hive."
+        }
       ],
       "false_positives": [
         "LSASS/SYSTEM itself legitimately reads this key continuously — must be filtered out or the rule is unusable",
@@ -362,17 +561,36 @@
         "Cross-check Sysmon 10 for LSASS memory access from the same process around the same time — secrets dumping frequently chains with LSASS memory dumping"
       ],
       "mitigations": [
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce complex, unique passwords, particularly for service accounts stored here." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Limit which accounts are configured to run as services with credentials cached this way." },
-        { "id": "M1017", "name": "User Training", "detail": "Reduce credential reuse so an exposed service-account secret doesn't unlock unrelated systems." }
-      ]
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce complex, unique passwords, particularly for service accounts stored here."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Limit which accounts are configured to run as services with credentials cached this way."
+        },
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Reduce credential reuse so an exposed service-account secret doesn't unlock unrelated systems."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is extracting LSA Secrets, a non-LSASS process will access HKLM\\SECURITY\\Policy\\Secrets, or reg.exe will run a save against hklm\\security.",
+        "rationale": "LSASS itself reads this key constantly, so the hypothesis is specifically scoped to non-LSASS callers to keep the signal clean."
+      }
     },
     {
       "id": "T1003.005",
       "name": "Cached Domain Credentials",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows", "Linux"],
+      "platforms": [
+        "Windows",
+        "Linux"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1003/005/",
       "overview": "Windows caches the last several domain logons (DCC2 / MSCache v2 hash format) at HKEY_LOCAL_MACHINE\\SECURITY\\Cache, under subkeys NL$1 through NL$10, so users can still log on when a domain controller is unreachable. Mimikatz's lsadump::cache module or the cachedump tool extract these; unlike NTLM hashes, DCC2 cannot be pass-the-hash'd directly and requires offline cracking. On Linux, AD-integrated hosts running SSSD or Quest Authentication Services keep an equivalent cache at /var/lib/sss/db/cache.[domain].ldb or /var/opt/quest/vas/authcache/vas_auth.vdb.",
       "concepts": [
@@ -390,16 +608,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "OilRig", "activity": "Used LaZagne to steal logged-in account credentials, including cached domain credentials." },
-        { "actor": "MuddyWater", "activity": "Conducted credential dumping operations utilizing LaZagne." },
-        { "actor": "APT33", "activity": "Used publicly available tools like LaZagne to gather credentials." },
-        { "actor": "Mimikatz", "activity": "lsadump::cache module decrypts the NL$KM syskey-wrapped MSCache entries from the registry or an offline hive." },
-        { "actor": "Cachedump", "activity": "Purpose-built tool for extracting cached password hashes from the SECURITY\\Cache entries." }
+        {
+          "actor": "OilRig",
+          "activity": "Used LaZagne to steal logged-in account credentials, including cached domain credentials."
+        },
+        {
+          "actor": "MuddyWater",
+          "activity": "Conducted credential dumping operations utilizing LaZagne."
+        },
+        {
+          "actor": "APT33",
+          "activity": "Used publicly available tools like LaZagne to gather credentials."
+        },
+        {
+          "actor": "Mimikatz",
+          "activity": "lsadump::cache module decrypts the NL$KM syskey-wrapped MSCache entries from the registry or an offline hive."
+        },
+        {
+          "actor": "Cachedump",
+          "activity": "Purpose-built tool for extracting cached password hashes from the SECURITY\\Cache entries."
+        }
       ],
       "data_sources": [
-        { "source": "Security 4656 / 4663", "detail": "Handle/access events on HKLM\\SECURITY\\Cache and its NL$1–NL$10 subkeys." },
-        { "source": "Sysmon 1 / Security 4688", "detail": "LaZagne, Mimikatz, or cachedump execution command lines." },
-        { "source": "auditd (Linux)", "detail": "File access on /var/lib/sss/db/cache.[domain].ldb (SSSD) or /var/opt/quest/vas/authcache/vas_auth.vdb (Quest VAS), which requires sudo/root." }
+        {
+          "source": "Security 4656 / 4663",
+          "detail": "Handle/access events on HKLM\\SECURITY\\Cache and its NL$1–NL$10 subkeys."
+        },
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "LaZagne, Mimikatz, or cachedump execution command lines."
+        },
+        {
+          "source": "auditd (Linux)",
+          "detail": "File access on /var/lib/sss/db/cache.[domain].ldb (SSSD) or /var/opt/quest/vas/authcache/vas_auth.vdb (Quest VAS), which requires sudo/root."
+        }
       ],
       "detection_queries": [
         {
@@ -422,8 +664,17 @@
         }
       ],
       "related": [
-        { "id": "T1003.002", "name": "Security Account Manager", "relation": "Both live under SYSTEM-protected registry hives and use the boot key, but SAM yields directly-reusable NTLM hashes while this yields only crackable DCC2." },
-        { "id": "T1110.002", "name": "Password Cracking", "external": true, "relation": "The mandatory next step for DCC2 — unlike NTLM it can't be replayed, only brute-forced offline." }
+        {
+          "id": "T1003.002",
+          "name": "Security Account Manager",
+          "relation": "Both live under SYSTEM-protected registry hives and use the boot key, but SAM yields directly-reusable NTLM hashes while this yields only crackable DCC2."
+        },
+        {
+          "id": "T1110.002",
+          "name": "Password Cracking",
+          "external": true,
+          "relation": "The mandatory next step for DCC2 — unlike NTLM it can't be replayed, only brute-forced offline."
+        }
       ],
       "false_positives": [
         "Authorized security-team password-cracking/forensics tooling run during a sanctioned assessment",
@@ -436,17 +687,35 @@
         "Reduce CachedLogonsCount where offline logon isn't operationally required, lowering the exposure window"
       ],
       "mitigations": [
-        { "id": "M1015", "name": "Active Directory Configuration", "detail": "Add sensitive users to the Protected Users group to restrict credential caching." },
-        { "id": "M1028", "name": "Operating System Configuration", "detail": "Limit cached credential count via HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\cachedlogonscount." },
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce complex, unique passwords across the network." }
-      ]
+        {
+          "id": "M1015",
+          "name": "Active Directory Configuration",
+          "detail": "Add sensitive users to the Protected Users group to restrict credential caching."
+        },
+        {
+          "id": "M1028",
+          "name": "Operating System Configuration",
+          "detail": "Limit cached credential count via HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\cachedlogonscount."
+        },
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce complex, unique passwords across the network."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is harvesting cached domain credentials, a non-LSASS process will access HKLM\\SECURITY\\Cache, or LaZagne/cachedump-style tooling will execute on the host.",
+        "rationale": "Like LSA Secrets, the only expected reader of this key is LSASS itself, making any other caller a strong initial signal."
+      }
     },
     {
       "id": "T1003.006",
       "name": "DCSync",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Windows"],
+      "platforms": [
+        "Windows"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1003/006/",
       "overview": "DCSync abuses the Directory Replication Service (DRS) Remote Protocol to make a non-domain-controller host impersonate a domain controller and request password data via legitimate AD replication APIs — no code needs to run on a DC at all. Any account holding the Replicating Directory Changes and Replicating Directory Changes All extended rights (normally only Domain Admins, Enterprise Admins, and DC computer accounts) can pull current and historical password hashes for any account, including krbtgt, enabling Golden Ticket forgery. Mimikatz implements it in the lsadump::dcsync module.",
       "concepts": [
@@ -464,16 +733,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "APT29", "activity": "Used privileged accounts to replicate directory service data during the SolarWinds compromise." },
-        { "actor": "LAPSUS$", "activity": "Deployed DCSync for credential gathering during privilege-escalation routines." },
-        { "actor": "Earth Lusca", "activity": "Used Mimikatz's DCSync command to retrieve credentials from a compromised controller." },
-        { "actor": "Mustang Panda", "activity": "Leveraged Mimikatz's DCSync feature to obtain user credentials." },
-        { "actor": "Storm-0501", "activity": "Utilized DCSync to extract victim credentials." }
+        {
+          "actor": "APT29",
+          "activity": "Used privileged accounts to replicate directory service data during the SolarWinds compromise."
+        },
+        {
+          "actor": "LAPSUS$",
+          "activity": "Deployed DCSync for credential gathering during privilege-escalation routines."
+        },
+        {
+          "actor": "Earth Lusca",
+          "activity": "Used Mimikatz's DCSync command to retrieve credentials from a compromised controller."
+        },
+        {
+          "actor": "Mustang Panda",
+          "activity": "Leveraged Mimikatz's DCSync feature to obtain user credentials."
+        },
+        {
+          "actor": "Storm-0501",
+          "activity": "Utilized DCSync to extract victim credentials."
+        }
       ],
       "data_sources": [
-        { "source": "Security 4662", "detail": "\"An operation was performed on an object\" against the domain object, with Properties containing the replication GUIDs 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 (DS-Replication-Get-Changes) or 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 (DS-Replication-Get-Changes-All). Requires \"Audit Directory Service Access\" enabled on the DC — not on by default." },
-        { "source": "Security 4661", "detail": "Handle-to-object-requested event that typically precedes the 4662." },
-        { "source": "Network / DRSUAPI", "detail": "RPC replication traffic (DRSUAPI, port 135 + dynamic RPC) arriving at a DC from a host that is not itself a domain controller." }
+        {
+          "source": "Security 4662",
+          "detail": "\"An operation was performed on an object\" against the domain object, with Properties containing the replication GUIDs 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 (DS-Replication-Get-Changes) or 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 (DS-Replication-Get-Changes-All). Requires \"Audit Directory Service Access\" enabled on the DC — not on by default."
+        },
+        {
+          "source": "Security 4661",
+          "detail": "Handle-to-object-requested event that typically precedes the 4662."
+        },
+        {
+          "source": "Network / DRSUAPI",
+          "detail": "RPC replication traffic (DRSUAPI, port 135 + dynamic RPC) arriving at a DC from a host that is not itself a domain controller."
+        }
       ],
       "detection_queries": [
         {
@@ -490,8 +783,17 @@
         }
       ],
       "related": [
-        { "id": "T1003.003", "name": "NTDS", "relation": "The file-based equivalent of this same domain-wide credential exposure." },
-        { "id": "T1558.001", "name": "Golden Ticket", "external": true, "relation": "The typical payoff once krbtgt's hash is pulled via DCSync — forging tickets that don't require touching a DC again." }
+        {
+          "id": "T1003.003",
+          "name": "NTDS",
+          "relation": "The file-based equivalent of this same domain-wide credential exposure."
+        },
+        {
+          "id": "T1558.001",
+          "name": "Golden Ticket",
+          "external": true,
+          "relation": "The typical payoff once krbtgt's hash is pulled via DCSync — forging tickets that don't require touching a DC again."
+        }
       ],
       "false_positives": [
         "Domain controllers replicating with each other (machine accounts, filtered by trailing $ above)",
@@ -505,17 +807,35 @@
         "Review the domain object's ACL for the Replicating Directory Changes / Replicating Directory Changes All rights and remove any unauthorized delegation"
       ],
       "mitigations": [
-        { "id": "M1015", "name": "Active Directory Configuration", "detail": "Manage the ACL for the Replicating Directory Changes rights so only DCs and explicitly approved accounts hold them." },
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce complex, unique local administrator passwords across the network." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Avoid placing domain accounts in local administrator groups." }
-      ]
+        {
+          "id": "M1015",
+          "name": "Active Directory Configuration",
+          "detail": "Manage the ACL for the Replicating Directory Changes rights so only DCs and explicitly approved accounts hold them."
+        },
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce complex, unique local administrator passwords across the network."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Avoid placing domain accounts in local administrator groups."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is running DCSync, a Security 4662 event will show the DS-Replication-Get-Changes or -All GUID requested by an account that isn't a domain controller or an approved sync/backup identity.",
+        "rationale": "This is one of the few hypotheses in the whole guide with almost no benign explanation once the known-DC and known-service-account allowlist is applied -- a true positive here is a critical incident, not a lead to triage."
+      }
     },
     {
       "id": "T1003.007",
       "name": "Proc Filesystem",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Linux"],
+      "platforms": [
+        "Linux"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1003/007/",
       "overview": "Linux's /proc pseudo-filesystem exposes kernel data structures per process, including /proc/<PID>/maps (memory region layout) and /proc/<PID>/mem (a direct window into that process's virtual address space). With root privileges an adversary can scan every running process's memory for credential-shaped strings; even an unprivileged user can inspect their own processes. Mimipenguin and LaZagne automate this against browsers, sshd, and other services that hold cleartext credentials in memory.",
       "concepts": [
@@ -533,16 +853,40 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "LaZagne", "activity": "Searches /proc/<PID>/maps and /proc/<PID>/mem with regex patterns to extract cleartext passwords from browser processes." },
-        { "actor": "MimiPenguin", "activity": "Reads /proc/<PID>/maps and /proc/<PID>/mem to identify and dump process memory via pattern matching, the Linux analogue of Mimikatz." },
-        { "actor": "Mini Shai-Hulud (npm supply-chain worm)", "activity": "Scraped CI runner process memory via /proc to obtain short-lived identity tokens for npm package authentication." },
-        { "actor": "TeamPCP Cloud Stealer", "activity": "Read /proc/<pid>/mem from CI runner worker processes to extract plaintext tokens and secrets." },
-        { "actor": "PACEMAKER", "activity": "Extracts credentials directly from operating system memory via the proc filesystem." }
+        {
+          "actor": "LaZagne",
+          "activity": "Searches /proc/<PID>/maps and /proc/<PID>/mem with regex patterns to extract cleartext passwords from browser processes."
+        },
+        {
+          "actor": "MimiPenguin",
+          "activity": "Reads /proc/<PID>/maps and /proc/<PID>/mem to identify and dump process memory via pattern matching, the Linux analogue of Mimikatz."
+        },
+        {
+          "actor": "Mini Shai-Hulud (npm supply-chain worm)",
+          "activity": "Scraped CI runner process memory via /proc to obtain short-lived identity tokens for npm package authentication."
+        },
+        {
+          "actor": "TeamPCP Cloud Stealer",
+          "activity": "Read /proc/<pid>/mem from CI runner worker processes to extract plaintext tokens and secrets."
+        },
+        {
+          "actor": "PACEMAKER",
+          "activity": "Extracts credentials directly from operating system memory via the proc filesystem."
+        }
       ],
       "data_sources": [
-        { "source": "auditd", "detail": "openat/read syscalls targeting /proc/[pid]/mem, /proc/[pid]/maps, or /proc/[pid]/environ." },
-        { "source": "auditd / EDR", "detail": "ptrace syscall usage or EXECVE records for mimipenguin-style tooling; CAP_SYS_PTRACE grants on a container are a risk amplifier." },
-        { "source": "EDR process telemetry", "detail": "Sequential ps -eo pid,command followed by strings against a /tmp scratch file — the documented Elastic prebuilt-rule pattern for mimipenguin-style credential dumping." }
+        {
+          "source": "auditd",
+          "detail": "openat/read syscalls targeting /proc/[pid]/mem, /proc/[pid]/maps, or /proc/[pid]/environ."
+        },
+        {
+          "source": "auditd / EDR",
+          "detail": "ptrace syscall usage or EXECVE records for mimipenguin-style tooling; CAP_SYS_PTRACE grants on a container are a risk amplifier."
+        },
+        {
+          "source": "EDR process telemetry",
+          "detail": "Sequential ps -eo pid,command followed by strings against a /tmp scratch file — the documented Elastic prebuilt-rule pattern for mimipenguin-style credential dumping."
+        }
       ],
       "detection_queries": [
         {
@@ -559,8 +903,17 @@
         }
       ],
       "related": [
-        { "id": "T1003.008", "name": "/etc/passwd and /etc/shadow", "relation": "The other core Linux credential-dumping surface; often hunted together as the two primary /proc- and file-based Linux techniques." },
-        { "id": "T1552.001", "name": "Credentials In Files", "external": true, "relation": "Memory-scraping tools like LaZagne frequently pivot to scanning config files and shell history on the same host." }
+        {
+          "id": "T1003.008",
+          "name": "/etc/passwd and /etc/shadow",
+          "relation": "The other core Linux credential-dumping surface; often hunted together as the two primary /proc- and file-based Linux techniques."
+        },
+        {
+          "id": "T1552.001",
+          "name": "Credentials In Files",
+          "external": true,
+          "relation": "Memory-scraping tools like LaZagne frequently pivot to scanning config files and shell history on the same host."
+        }
       ],
       "false_positives": [
         "Legitimate debugging/troubleshooting by developers or SREs using gdb, strace, or manual /proc inspection under authorization",
@@ -574,16 +927,30 @@
         "For CI/CD runner compromise, rotate every token issued to that runner and check package registries for unauthorized publishes"
       ],
       "mitigations": [
-        { "id": "M1027", "name": "Password Policies", "detail": "Maintain complex, unique passwords across all root accounts." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict privileged (root/CAP_SYS_PTRACE) access to prevent unauthorized process-memory reads." }
-      ]
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Maintain complex, unique passwords across all root accounts."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Restrict privileged (root/CAP_SYS_PTRACE) access to prevent unauthorized process-memory reads."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is scraping process memory via /proc on Linux, a non-root or unexpected process will open /proc/<pid>/mem or /proc/<pid>/maps for a sensitive target (sshd, a browser, a keyring daemon), or a ps then strings command sequence will run in quick succession.",
+        "rationale": "The ps-then-strings pattern specifically has near-zero legitimate reason to occur back-to-back, making it a good first filter before diving into raw /proc access logs."
+      }
     },
     {
       "id": "T1003.008",
       "name": "/etc/passwd and /etc/shadow",
       "tactic": "TA0006",
       "tactic_name": "Credential Access",
-      "platforms": ["Linux"],
+      "platforms": [
+        "Linux"
+      ],
       "mitre_url": "https://attack.mitre.org/techniques/T1003/008/",
       "overview": "/etc/passwd holds user account metadata (UID, GID, home directory, shell) and is world-readable by design. /etc/shadow holds the actual password hashes and is root-only (mode 0600) by default. An adversary with root or sudo needs both files together — commonly combined with the unshadow utility — to feed offline crackers like John the Ripper or hashcat, since the two files are interdependent for that purpose.",
       "concepts": [
@@ -601,13 +968,28 @@
         }
       ],
       "procedure_examples": [
-        { "actor": "LaZagne", "activity": "shadow.py module extracts credentials directly from /etc/shadow." },
-        { "actor": "ShadowRay campaign", "activity": "Threat actors executed cat /etc/shadow to harvest password hashes from exposed Ray clusters." }
+        {
+          "actor": "LaZagne",
+          "activity": "shadow.py module extracts credentials directly from /etc/shadow."
+        },
+        {
+          "actor": "ShadowRay campaign",
+          "activity": "Threat actors executed cat /etc/shadow to harvest password hashes from exposed Ray clusters."
+        }
       ],
       "data_sources": [
-        { "source": "auditd", "detail": "File-read watch on /etc/shadow (and /etc/passwd for the paired-access pattern)." },
-        { "source": "EDR file telemetry", "detail": "/etc/shadow is 0600 root-owned, so any non-root reader is inherently suspicious; /etc/passwd is world-readable, so the signal there is an unusual reading process, not the read itself." },
-        { "source": "EDR process telemetry", "detail": "Execution of cat /etc/shadow, unshadow, or a John the Ripper / hashcat invocation shortly after either file is accessed." }
+        {
+          "source": "auditd",
+          "detail": "File-read watch on /etc/shadow (and /etc/passwd for the paired-access pattern)."
+        },
+        {
+          "source": "EDR file telemetry",
+          "detail": "/etc/shadow is 0600 root-owned, so any non-root reader is inherently suspicious; /etc/passwd is world-readable, so the signal there is an unusual reading process, not the read itself."
+        },
+        {
+          "source": "EDR process telemetry",
+          "detail": "Execution of cat /etc/shadow, unshadow, or a John the Ripper / hashcat invocation shortly after either file is accessed."
+        }
       ],
       "detection_queries": [
         {
@@ -624,8 +1006,17 @@
         }
       ],
       "related": [
-        { "id": "T1003.007", "name": "Proc Filesystem", "relation": "The other core Linux credential-dumping surface — /proc memory scraping versus flat-file extraction." },
-        { "id": "T1110.002", "name": "Password Cracking", "external": true, "relation": "The required next step once /etc/shadow is exfiltrated — hashes must be cracked offline before they're usable." }
+        {
+          "id": "T1003.007",
+          "name": "Proc Filesystem",
+          "relation": "The other core Linux credential-dumping surface — /proc memory scraping versus flat-file extraction."
+        },
+        {
+          "id": "T1110.002",
+          "name": "Password Cracking",
+          "external": true,
+          "relation": "The required next step once /etc/shadow is exfiltrated — hashes must be cracked offline before they're usable."
+        }
       ],
       "false_positives": [
         "PAM-integrated authentication daemons (sshd, login, sudo, su) reading /etc/shadow as part of every legitimate authentication",
@@ -638,9 +1029,21 @@
         "Review how a non-root process was able to read the file at all — misconfigured sudo rules or container/socket exposure are common root causes"
       ],
       "mitigations": [
-        { "id": "M1027", "name": "Password Policies", "detail": "Enforce complex, unique root account passwords across all networked systems." },
-        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict privileged access through standard practices to prevent unauthorized sensitive-file exposure." }
-      ]
+        {
+          "id": "M1027",
+          "name": "Password Policies",
+          "detail": "Enforce complex, unique root account passwords across all networked systems."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Restrict privileged access through standard practices to prevent unauthorized sensitive-file exposure."
+        }
+      ],
+      "hypothesis": {
+        "statement": "If an adversary is harvesting local Linux credentials, /etc/shadow will be read by a process other than the standard PAM-integrated authentication binaries (login, sshd, sudo, su, passwd).",
+        "rationale": "Because /etc/shadow is root-only by design, any non-auth-binary reader is inherently suspicious rather than merely anomalous."
+      }
     }
   ]
 }

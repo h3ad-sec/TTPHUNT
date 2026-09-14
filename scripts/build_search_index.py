@@ -49,6 +49,9 @@ def build_sub_blob(sub):
     parts = [sub.get("id"), sub.get("name"), sub.get("overview")]
     for c in sub.get("concepts", []):
         parts += [c.get("term"), c.get("explanation")]
+    hyp = sub.get("hypothesis")
+    if hyp:
+        parts += [hyp.get("statement"), hyp.get("rationale")]
     for p in sub.get("procedure_examples", []):
         parts += [p.get("actor"), p.get("activity")]
     for d in sub.get("data_sources", []):
