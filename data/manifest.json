@@ -1,6 +1,6 @@
 {
   "generated": "2026-09-14",
-  "count": 1,
+  "count": 2,
   "techniques": [
     {
       "id": "T1003",
@@ -18,6 +18,21 @@
         { "id": "T1003.006", "name": "DCSync" },
         { "id": "T1003.007", "name": "Proc Filesystem" },
         { "id": "T1003.008", "name": "/etc/passwd and /etc/shadow" }
+      ]
+    },
+    {
+      "id": "T1558",
+      "name": "Steal or Forge Kerberos Tickets",
+      "tactic": "TA0006",
+      "tactic_name": "Credential Access",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "file": "techniques/T1558.json",
+      "subtechniques": [
+        { "id": "T1558.001", "name": "Golden Ticket" },
+        { "id": "T1558.002", "name": "Silver Ticket" },
+        { "id": "T1558.003", "name": "Kerberoasting" },
+        { "id": "T1558.004", "name": "AS-REP Roasting" },
+        { "id": "T1558.005", "name": "Ccache Files" }
       ]
     }
   ]

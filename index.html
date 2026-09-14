@@ -308,6 +308,13 @@ body.light .tt-query-pre{color:#0d3a5c;}
 .tt-sub-progress-dot.some{background:#f59e0b;}
 .tt-sub-progress-dot.done{background:#00d4ff;}
 
+/* Long unbroken strings (registry paths, GUIDs, file paths) have no natural
+   break points -- without this they push their card wider than the viewport
+   instead of wrapping, on any screen size but especially narrow ones. */
+.tt-prose,.tt-concept-exp,.tt-concept-term,.tt-proc-activity,.tt-proc-actor,.tt-ds-detail,.tt-ds-source,
+.tt-query-desc,.tt-fp-item,.tt-check-text,.tt-mit-detail,.tt-mit-name,.tt-related-why,.tt-related-name,
+.tt-hunt-desc,.tt-empty p,.tt-crumb{overflow-wrap:break-word;word-break:break-word;}
+
 @media(max-width:900px){
   .tt-body{flex-direction:column;}
   .tt-sidebar{position:fixed;top:var(--nav-h);left:0;bottom:0;width:min(360px,88vw);z-index:60;transform:translateX(-100%);
@@ -717,6 +724,14 @@ function onSearch(){
   renderTree();
 }
 
+function findParentOfSub(subId){
+  var parentId=null;
+  manifest.techniques.forEach(function(t){
+    t.subtechniques.forEach(function(s){ if(s.id===subId)parentId=t.id; });
+  });
+  return parentId;
+}
+
 function loadTechnique(id){
   if(techniqueCache[id])return Promise.resolve(techniqueCache[id]);
   var entry=null;
@@ -912,9 +927,9 @@ function renderSubDetail(full,sub){
   if(sub.related && sub.related.length){
     html+='<div class="tt-section"><div class="tt-section-title">Related / Chained Techniques</div><div class="tt-related-grid">';
     sub.related.forEach(function(r){
-      var isInternal=!r.external && full.subtechniques.some(function(s){return s.id===r.id;});
-      if(isInternal){
-        html+='<div class="tt-related-row" onclick="selectSub(\''+esc(full.id)+'\',\''+esc(r.id)+'\')">';
+      var parentId=findParentOfSub(r.id);
+      if(parentId){
+        html+='<div class="tt-related-row" onclick="selectSub(\''+esc(parentId)+'\',\''+esc(r.id)+'\')">';
         html+='<span class="tt-related-id">'+esc(r.id)+'</span>';
         html+='<span class="tt-related-body"><span class="tt-related-name">'+esc(r.name)+'</span><br><span class="tt-related-why">'+esc(r.relation)+'</span></span></div>';
       } else {
