@@ -26,6 +26,10 @@
     {
       "term": "Encoding and obfuscation as the near-universal tell",
       "explanation": "Base64-encoded PowerShell (`-EncodedCommand`/`-enc`), string concatenation to break up flagged keywords, char-code-built strings in JavaScript, obfuscated VBA — this pattern repeats across nearly every interpreter covered here. It's one of the single highest-value generic signals in this whole technique family: legitimate administrative scripts are very rarely deliberately obfuscated, so a genuinely encoded or heavily obfuscated command line is disproportionately likely to be worth a look regardless of which interpreter carried it."
+    },
+    {
+      "term": "AMSI: the one defense that spans several of these sub-techniques at once",
+      "explanation": "The Antimalware Scan Interface (AMSI) lets antivirus/EDR engines inspect script content after de-obfuscation but before execution — it's what actually reads the real command behind a Base64-encoded PowerShell blob. Its coverage is specific and worth knowing exactly: PowerShell (version 5+), Windows Script Host (so both VBScript and JScript, covering T1059.005 and T1059.007), Office VBA and Excel 4.0 macros, and dynamic .NET assembly loads. It does not cover Python or Perl at all — which is a real, documented reason some intrusions deliberately reach for T1059.006 (Python) specifically to route around AMSI rather than fight through it. \"AMSI bypass\" techniques (patching the AMSI DLL in memory, reflection tricks to disable the scan) are themselves one of the most common PowerShell-specific evasion patterns in real intrusions, precisely because AMSI is otherwise so effective against this technique family."
     }
   ],
   "subtechniques": [
@@ -45,6 +49,10 @@
         {
           "term": "Execution without powershell.exe",
           "explanation": "PowerShell's engine lives in the System.Management.Automation .NET assembly — any .NET application, including a custom-compiled one, can host that assembly and run PowerShell code without ever spawning powershell.exe. This is exactly why process-name-based detection (\"alert if powershell.exe runs\") is necessary but not sufficient; module and script-block logging fire regardless of which process hosted the engine, which is the real reason they matter."
+        },
+        {
+          "term": "Constrained Language Mode and JEA: restricting what the engine can do, not just logging it",
+          "explanation": "Everything above is about visibility — seeing what ran. Constrained Language Mode is the actual restriction: it blocks access to the .NET types and APIs (Add-Type, COM objects, Win32 API calls) that most post-exploitation PowerShell tooling depends on, while still allowing normal cmdlet-based administration. Just Enough Administration (JEA) goes further by scoping a whole PowerShell remoting session to a specific, pre-approved set of cmdlets for a specific role, so even an authenticated admin session can't run arbitrary code beyond what that role actually needs. Applying language-mode restriction is why M1038 (Execution Prevention) is listed as its own mitigation distinct from logging — CLM/JEA change what's possible, not just what's recorded."
         }
       ],
       "procedure_examples": [
@@ -115,6 +123,10 @@
         {
           "term": "The native-API path that skips osascript",
           "explanation": "Since macOS 10.10, a compiled Mach-O binary can call NSAppleScript or the OSAScript API directly, executing AppleScript logic without ever invoking the osascript command-line tool. Detections that only watch for osascript process creation miss this path entirely — it's why MITRE's own detection strategy for this technique explicitly separates 'via osascript' from 'via native API' as two different analytics."
+        },
+        {
+          "term": "What Gatekeeper actually checks",
+          "explanation": "Gatekeeper is macOS's launch-time gate for downloaded applications: before letting a quarantined app run, it verifies the binary carries a valid Apple Developer ID signature (or is notarized) and hasn't been tampered with since signing. Requiring that check for AppleScript-driven or scripted applications means an attacker either needs a legitimate (often stolen or fraudulently obtained) signing identity, or has to rely on execution paths that don't trigger Gatekeeper at all — like osascript running a plain .scpt/.applescript file directly, which is a script, not a launched application, and so isn't something Gatekeeper's app-launch check inspects in the first place."
         }
       ],
       "procedure_examples": [
@@ -479,7 +491,7 @@
         },
         {
           "term": "Why permission tiers matter more here than on general-purpose OSes",
-          "explanation": "Network operating systems enforce their own command-level permission tiers (e.g., Cisco's privilege levels 0-15) independent of general OS user accounts. TACACS+/AAA is the mechanism that actually ties specific commands to specific authenticated identities and enforces who can run 'config replace' or view running-config — without it, device-level logins are often shared or poorly individually attributable, which is exactly why AAA/TACACS+ is the leading mitigation across this sub-technique rather than any host-based control."
+          "explanation": "Network operating systems enforce their own command-level permission tiers (e.g., Cisco's privilege levels 0-15) independent of general OS user accounts. AAA (Authentication, Authorization, and Accounting) — usually implemented via TACACS+ — is the mechanism that actually ties specific commands to specific authenticated identities and enforces who can run 'config replace' or view running-config — without it, device-level logins are often shared or poorly individually attributable, which is exactly why AAA/TACACS+ is the leading mitigation across this sub-technique rather than any host-based control."
         }
       ],
       "procedure_examples": [
@@ -536,6 +548,10 @@
         {
           "term": "Why credential theft is the real precondition, not a coding trick",
           "explanation": "Every example of this sub-technique — Pacu, TruffleHog, Storm-0501's cloud CLI usage — depends entirely on already holding valid API credentials. There's no exploit being chained here; it's stolen access tokens, leaked keys, or a compromised identity being pointed at a fully-documented, intended-to-be-powerful API. This is why the mitigations lean so heavily on IAM/RBAC scoping and audit trails rather than anything resembling traditional execution prevention."
+        },
+        {
+          "term": "IAM identity: what's actually being stolen",
+          "explanation": "Cloud IAM (Identity and Access Management) replaces the OS-level user account with a broader identity model: a human user, a service account, or an assumed role, each holding an access token or key rather than a password checked at logon. RBAC (Role-Based Access Control) is how permissions get attached to that identity — a role or policy naming exactly which API actions it may call. That token is a bearer credential: whoever holds it can call the API as that identity from anywhere, with no further proof required, which is exactly why leaked keys and stolen session tokens are functionally equivalent to a full account compromise here, not a lesser exposure the way a leaked username alone would be."
         }
       ],
       "procedure_examples": [
@@ -710,6 +726,10 @@
         {
           "term": "Why 'no specific mitigations' is the honest answer here",
           "explanation": "MITRE's own guidance for this sub-technique notes there's no dedicated preventive control, because esxcli and vim-cmd are exploiting inherent, intended system functionality — full administrative capability is the entire point of these tools. That pushes the practical defense almost entirely onto access control (who can reach the ESXi management interface at all) and detection (catching abuse after the fact via unauthorized-user and off-hours-activity signals), rather than any technical restriction on the tools themselves."
+        },
+        {
+          "term": "VIBs and execInstalledOnly: the one real technical lever ESXi does have",
+          "explanation": "A VIB (vSphere Installation Bundle) is VMware's signed software package format for anything installed on an ESXi host — drivers, agents, and third-party extensions all ship this way. The execInstalledOnly setting tells the hypervisor kernel to refuse execution of any binary that wasn't installed as part of a signed VIB, which closes off a large class of dropped-tool abuse (a malicious binary uploaded via SCP and run directly) even though esxcli/vim-cmd themselves — already-installed, signed, legitimate tools — remain fully usable by anyone with shell access. It's a real, meaningful control against the T1059.004 Unix Shell payload-dropping pattern on ESXi specifically, just not one that touches the CLI-abuse-of-legitimate-tools problem this sub-technique itself is about."
         }
       ],
       "procedure_examples": [

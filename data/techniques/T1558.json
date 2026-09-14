@@ -30,6 +30,10 @@
     {
       "term": "Ticket lifetime as a forgery tell",
       "explanation": "A standard Active Directory domain's Default Domain Policy caps a TGT's lifetime at 10 hours (\"Maximum lifetime for user ticket\"). Forging tools default to far longer validity unless an operator deliberately overrides it — a multi-day or multi-year ticket lifetime on a 4769 event is one of the more reliable golden-ticket tells precisely because matching the legitimate default takes extra, easy-to-forget effort on the attacker's part."
+    },
+    {
+      "term": "The PAC: what actually carries the privilege, not just the identity",
+      "explanation": "A Kerberos ticket doesn't just prove who you are — it carries a Privilege Attribute Certificate (PAC), an authorization-data structure listing the account's SIDs and group memberships, which is what a service actually checks to decide what you're allowed to do. The PAC is signed by the KDC (with the krbtgt key, for a TGT), and that signature is the only thing stopping a client from simply claiming Domain Admin membership for itself. This is the real mechanism underneath both Golden and Silver Ticket forgery: whoever holds the signing key can write whatever SIDs they want into the PAC and sign it as valid."
     }
   ],
   "subtechniques": [
@@ -49,6 +53,10 @@
         {
           "term": "Why the forged ticket doesn't need a real AS-REQ",
           "explanation": "Normally a TGT only exists because a client sent an AS-REQ and the KDC's Authentication Service replied with an AS-REP. A Golden Ticket skips that exchange entirely — Mimikatz or Rubeus constructs the ticket structure locally and encrypts it with the stolen krbtgt key, then the attacker presents it straight to the TGS for a service ticket. The resulting absence of a matching 4768 before the 4769 is exactly the gap most Golden Ticket detections key on."
+        },
+        {
+          "term": "The forgery is really PAC forgery",
+          "explanation": "Krbtgt's key doesn't just encrypt the TGT's envelope — it's also what signs the PAC inside it, the structure listing which groups the ticket's holder belongs to. Mimikatz's kerberos::golden module doesn't need to compromise a real Domain Admin account at all; it builds a PAC claiming Domain Admins (or any group SID the operator specifies) from scratch and signs it with the stolen krbtgt key, which the KDC will accept exactly as if a legitimate domain controller had issued it."
         }
       ],
       "procedure_examples": [
@@ -114,6 +122,10 @@
         {
           "term": "Why detection has to move off the DC",
           "explanation": "Because there's no DC-side Kerberos event to catch, Silver Ticket detection has to rely on the target service's own logs (application audit logs, IIS/SQL logons) showing a Kerberos-authenticated session with no matching request on any domain controller in that same window — an absence-based correlation rather than a single matching event, which is inherently noisier and harder to automate than the Golden Ticket gap."
+        },
+        {
+          "term": "A narrower PAC forgery, not a different mechanism",
+          "explanation": "A Silver Ticket forges the exact same PAC structure a Golden Ticket does — SIDs and group membership signed with a key the attacker controls — the only difference is which key. Instead of krbtgt (which every DC trusts), it's signed with one target service account's key, so only that specific service, checking the PAC on its own, will accept it as valid. Some services can be configured to double-check the PAC against a DC (PAC validation) specifically to catch this; services that skip that check are the ones fully exposed to a forged Silver Ticket."
         }
       ],
       "procedure_examples": [
