@@ -230,6 +230,10 @@
           "explanation": "Modern cloud authentication issues a long-lived session or refresh token once MFA succeeds, so the app doesn't re-prompt for every action. Stealing that token — from a compromised device, a malicious OAuth app grant, or an adversary-in-the-middle phishing kit — lets an attacker act as the user for the token's remaining lifetime without ever facing the MFA challenge again. It's functionally identical to stealing a Kerberos ticket instead of a password: the proof-of-authentication itself, not the credential that produced it, becomes the thing worth stealing."
         },
         {
+          "term": "Legacy authentication protocols: the MFA bypass hiding in plain sight",
+          "explanation": "Modern cloud sign-in enforces MFA at the identity provider itself — the login flow routes through it, and it's the one that issues the challenge. Legacy protocols (POP3, IMAP, SMTP AUTH, older Exchange ActiveSync/MAPI, and Basic Authentication generally) were built before that model existed: they authenticate with a bare username and password sent directly to the mail/app server, bypassing the identity provider's login flow entirely. The practical result is that an account can have MFA fully configured and still be completely accessible with just a stolen password, through a protocol that was never capable of asking for a second factor in the first place — which is exactly why disabling legacy auth outright is treated as more effective than any amount of MFA enforcement layered on top of it."
+        },
+        {
           "term": "Service principals: the non-human blind spot, cloud edition",
           "explanation": "Service principals and managed identities are the cloud analogue of domain service accounts — they hold powerful API permissions, can't respond to an MFA prompt because there's no human behind them, and are easy to create without drawing attention. APT29 didn't need to steal an existing one during the SolarWinds compromise; using a compromised O365 admin account, they simply created a new Service Principal with the access they wanted, which is a persistence mechanism as much as an access one."
         }

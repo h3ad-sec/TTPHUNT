@@ -208,6 +208,10 @@
         {
           "term": "Early Bird: winning the race against everything else",
           "explanation": "Creating a process suspended and queuing the malicious APC before that process's main thread ever reaches its real entry point means the payload runs before any of the process's own normal startup code executes — including, crucially, before hooks or monitoring that some security products install only once a process has genuinely started running get a chance to observe anything at all."
+        },
+        {
+          "term": "AtomBombing: reaching the APC queue without WriteProcessMemory at all",
+          "explanation": "The global atom table is a legitimate, system-wide string storage table any process can write to via GlobalAddAtom and read from via GlobalGetAtomName — it exists so unrelated processes can share small pieces of data. AtomBombing writes a malicious ROP chain and shellcode into that shared table instead of into the target process's memory directly, then uses NtQueueApcThread to force the target's own thread to call GlobalGetAtomName and copy that data into itself. The injecting process never calls WriteProcessMemory against the target at all — the target effectively copies the payload into its own memory on the attacker's behalf, which is exactly why this variant evades detections built around watching for cross-process memory writes specifically."
         }
       ],
       "procedure_examples": [
