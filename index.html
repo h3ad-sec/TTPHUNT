@@ -160,6 +160,7 @@ body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
   font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);user-select:none;}
 .tt-tactic-head:hover{color:var(--text-dim);background:rgba(0,212,255,.04);}
 .tt-tactic-caret{width:10px;height:10px;flex-shrink:0;transition:transform .18s;color:var(--muted-dim);}
+.tt-tactic-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;box-shadow:0 0 5px currentColor;}
 .tt-tactic-group.collapsed .tt-tactic-caret{transform:rotate(-90deg);}
 .tt-tactic-group.collapsed .tt-technique-list{display:none;}
 .tt-technique-list{padding-left:4px;}
@@ -203,9 +204,21 @@ body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
 .tt-home-stats{display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--dim);}
 .tt-home-stats b{color:var(--accent);font-size:15px;}
 
-.tt-pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;}
-.tt-pack-card{border:1px solid var(--border);border-radius:9px;padding:16px 18px;cursor:pointer;transition:.15s;background:var(--panel-alt);}
-.tt-pack-card:hover{border-color:var(--accent);background:var(--surface);}
+.tt-pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
+.tt-pack-card{--pack-rgb:0,212,255;position:relative;overflow:hidden;border:1px solid var(--border);border-radius:9px;
+  padding:18px 18px 16px;cursor:pointer;transition:transform .18s var(--ease),border-color .18s,background .18s,box-shadow .18s;
+  background:var(--panel-alt);animation:packIn .35s var(--ease) backwards;}
+.tt-pack-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,rgb(var(--pack-rgb)),transparent);opacity:.75;}
+.tt-pack-card:hover{border-color:rgb(var(--pack-rgb));background:var(--surface);
+  transform:translateY(-2px);box-shadow:0 8px 24px -8px rgba(var(--pack-rgb),.35);}
+.tt-pack-grid .tt-pack-card:nth-child(1){animation-delay:.02s;}
+.tt-pack-grid .tt-pack-card:nth-child(2){animation-delay:.06s;}
+.tt-pack-grid .tt-pack-card:nth-child(3){animation-delay:.1s;}
+.tt-pack-grid .tt-pack-card:nth-child(4){animation-delay:.14s;}
+.tt-pack-grid .tt-pack-card:nth-child(5){animation-delay:.18s;}
+.tt-pack-grid .tt-pack-card:nth-child(6){animation-delay:.22s;}
+@keyframes packIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
 .tt-pack-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
 .tt-pack-name{font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px;}
 .tt-pack-count{font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:10px;}
@@ -597,6 +610,24 @@ var searchIndexReady=false;
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
+/* One accent color per tactic, reused platform-wide convention (per-card --rgb
+   custom property + gradient top bar, same pattern as H3AD-HUNT's tool cards). */
+var TACTIC_RGB={
+  'Credential Access':'0,212,255',
+  'Execution':'245,158,11',
+  'Defense Evasion':'167,139,250',
+  'Privilege Escalation':'167,139,250',
+  'Lateral Movement':'20,184,166',
+  'Persistence':'236,72,153',
+  'Initial Access':'99,102,241',
+  'Discovery':'34,197,94',
+  'Collection':'234,179,8',
+  'Command and Control':'239,68,68',
+  'Exfiltration':'249,115,22',
+  'Impact':'220,38,38'
+};
+function tacticRgb(name){ return TACTIC_RGB[name] || '0,212,255'; }
+
 /* ── Working-mode checklist (localStorage, per sub-technique) ── */
 var CHECKLIST_KEY='ttphunt_checklist_v1';
 function loadChecklists(){
@@ -728,9 +759,11 @@ function renderTree(){
     var visibleTechniques=techniques.filter(techMatchesSearch);
     if(searchTerm && visibleTechniques.length===0)return;
     var tCollapsed=collapsedTactics[tacticName];
+    var tacticColor=tacticRgb(tacticName);
     html+='<div class="tt-tactic-group'+(tCollapsed?' collapsed':'')+'" data-tactic="'+esc(tacticName)+'">';
     html+='<div class="tt-tactic-head" onclick="toggleTactic(\''+esc(tacticName).replace(/'/g,"\\'")+'\')">';
     html+='<svg class="tt-tactic-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>';
+    html+='<span class="tt-tactic-dot" style="background:rgb('+tacticColor+')"></span>';
     html+=esc(tacticName)+'</div>';
     html+='<div class="tt-technique-list">';
     visibleTechniques.forEach(function(t){
@@ -879,9 +912,10 @@ function renderHome(){
 
   html+='<div class="tt-section"><div class="tt-section-title">Technique Packs</div><div class="tt-pack-grid">';
   manifest.techniques.forEach(function(t){
-    html+='<div class="tt-pack-card" onclick="selectTechnique(\''+esc(t.id)+'\')">';
-    html+='<div class="tt-pack-head"><span class="tt-detail-id">'+esc(t.id)+'</span>';
-    html+='<span class="tt-badge tactic">'+esc(t.tactic)+' · '+esc(t.tactic_name)+'</span></div>';
+    var rgb=tacticRgb(t.tactic_name);
+    html+='<div class="tt-pack-card" style="--pack-rgb:'+rgb+'" onclick="selectTechnique(\''+esc(t.id)+'\')">';
+    html+='<div class="tt-pack-head"><span class="tt-detail-id" style="color:rgb('+rgb+')">'+esc(t.id)+'</span>';
+    html+='<span class="tt-badge tactic" style="color:rgb('+rgb+');border-color:rgba('+rgb+',.35);background:rgba('+rgb+',.08)">'+esc(t.tactic)+' · '+esc(t.tactic_name)+'</span></div>';
     html+='<div class="tt-pack-name">'+esc(t.name)+'</div>';
     html+='<div class="tt-badge-row">';
     (t.platforms||[]).forEach(function(p){ html+='<span class="tt-badge plat">'+esc(p)+'</span>'; });
@@ -895,15 +929,16 @@ function renderHome(){
 }
 
 function renderTechniqueLanding(full){
+  var rgb=tacticRgb(full.tactic_name);
   var html=crumb(full,null);
   html+='<div class="tt-detail-head"><div>';
-  html+='<div class="tt-detail-id">'+esc(full.id)+'</div>';
+  html+='<div class="tt-detail-id" style="color:rgb('+rgb+')">'+esc(full.id)+'</div>';
   html+='<div class="tt-detail-title">'+esc(full.name)+'</div>';
   html+='</div>';
   if(full.mitre_url)html+='<a class="tt-mitre-link" href="'+esc(full.mitre_url)+'" target="_blank" rel="noopener">View on attack.mitre.org ↗</a>';
   html+='</div>';
   html+='<div class="tt-badge-row">';
-  html+='<span class="tt-badge tactic">'+esc(full.tactic)+' · '+esc(full.tactic_name)+'</span>';
+  html+='<span class="tt-badge tactic" style="color:rgb('+rgb+');border-color:rgba('+rgb+',.35);background:rgba('+rgb+',.08)">'+esc(full.tactic)+' · '+esc(full.tactic_name)+'</span>';
   (full.platforms||[]).forEach(function(p){ html+='<span class="tt-badge plat">'+esc(p)+'</span>'; });
   html+='</div>';
   html+='<div class="tt-prose">'+esc(full.overview)+'</div>';
@@ -1011,9 +1046,10 @@ function exportMarkdown(techId,subId){
 
 var queryIdCounter=0;
 function renderSubDetail(full,sub){
+  var rgb=tacticRgb(sub.tactic_name);
   var html=crumb(full,sub.id+' '+sub.name);
   html+='<div class="tt-detail-head"><div>';
-  html+='<div class="tt-detail-id">'+esc(sub.id)+' · '+esc(full.name)+'</div>';
+  html+='<div class="tt-detail-id" style="color:rgb('+rgb+')">'+esc(sub.id)+' · '+esc(full.name)+'</div>';
   html+='<div class="tt-detail-title">'+esc(sub.name)+'</div>';
   html+='</div>';
   html+='<div class="tt-detail-actions">';
@@ -1023,7 +1059,7 @@ function renderSubDetail(full,sub){
   html+='</div>';
   html+='</div>';
   html+='<div class="tt-badge-row">';
-  html+='<span class="tt-badge tactic">'+esc(sub.tactic)+' · '+esc(sub.tactic_name)+'</span>';
+  html+='<span class="tt-badge tactic" style="color:rgb('+rgb+');border-color:rgba('+rgb+',.35);background:rgba('+rgb+',.08)">'+esc(sub.tactic)+' · '+esc(sub.tactic_name)+'</span>';
   (sub.platforms||[]).forEach(function(p){ html+='<span class="tt-badge plat">'+esc(p)+'</span>'; });
   html+='</div>';
   html+='<div class="tt-prose">'+esc(sub.overview)+'</div>';
