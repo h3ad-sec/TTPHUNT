@@ -1,0 +1,507 @@
+{
+  "id": "T1021",
+  "name": "Remote Services",
+  "tactic": "TA0008",
+  "tactic_name": "Lateral Movement",
+  "platforms": ["Windows", "Linux", "macOS", "ESXi", "IaaS", "Identity Provider", "SaaS", "Office Suite"],
+  "mitre_url": "https://attack.mitre.org/techniques/T1021/",
+  "overview": "Adversaries use valid accounts to authenticate to services that support remote connections — RDP, SMB, SSH, VNC, WinRM, DCOM, and their cloud equivalents — and once inside, use the built-in legitimate remote-access functionality of the operating system or cloud platform itself to move from host to host. This is the direct payoff of T1078: valid accounts establish that a credential works, T1021 is what an attacker actually does with network reach and that credential in hand. The 8 sub-techniques below split by protocol, not by sophistication — which one gets used is almost always a question of what's already open on the target, not which is more advanced.",
+  "prerequisite_concepts": [
+    {
+      "term": "Protocol choice is availability, not skill level",
+      "explanation": "RDP, SSH, SMB, WinRM, VNC, and DCOM are not a ladder of increasing attacker sophistication — they're six different doors, and an intruder picks whichever one is already unlocked on this specific target. A Windows shop with RDP wide open gets RDP; a Linux-heavy environment gets SSH; a host with no remote GUI service at all but an open admin share gets SMB. This mirrors the interpreter-interchangeability idea from T1059: defending against just one of these protocols leaves the other five completely untouched."
+    },
+    {
+      "term": "Interactive vs. non-interactive access — different capability, different telemetry",
+      "explanation": "RDP and VNC hand an attacker a full graphical session — they see what a user would see and can use any GUI tool already installed. SMB, WinRM, DCOM, and SSH give command execution without ever rendering a desktop. That split matters twice: it shapes what an attacker can accomplish immediately (GUI tooling vs. command-line only), and it shapes what shows up in logs — a RemoteInteractive logon behaves very differently from a scripted remote command, which is exactly why each sub-technique below has its own distinct detection fingerprint rather than one generic \"remote logon\" signal covering all of them."
+    },
+    {
+      "term": "Authentication proves identity; it rarely scopes what that identity can then do",
+      "explanation": "Every protocol in this pack authenticates a connection — checks that the credential is real — but does comparatively little to restrict what an authenticated session can subsequently touch beyond coarse group membership (local admin, Domain Admins). That gap is exactly why network segmentation, RDP gateways, WinRM TrustedHosts scoping, and SSH allow-lists carry so much of the actual access-control weight in the mitigations below — the protocols themselves were largely never designed to do that job."
+    },
+    {
+      "term": "Cloud remote services: lateral movement without network adjacency",
+      "explanation": "T1021.007 and T1021.008 extend this exact same valid-account-plus-remote-access pattern into infrastructure that has no traditional network boundary at all. A federated cloud identity can reach a console or VM connect feature from anywhere on the internet — an attacker doesn't need to be on the same network segment, or any network segment the victim controls, to \"move laterally\" in the cloud sense. That's a meaningful shift from everything else in this pack, where physical or logical network reach was always a precondition."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1021.001",
+      "name": "Remote Desktop Protocol",
+      "tactic": "TA0008",
+      "tactic_name": "Lateral Movement",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1021/001/",
+      "overview": "RDP (Microsoft's Remote Desktop Services) gives an authenticated user a full interactive graphical session on a remote Windows host, using whatever privileges that account holds. Because it hands over a complete desktop rather than just command execution, it's one of the highest-capability lateral movement paths in this pack — and one of the most dangerous to expose directly to the internet, which is exactly what a large share of real-world ransomware intrusions still find open.",
+      "concepts": [
+        {
+          "term": "LogonType 10 as a clean, specific fingerprint",
+          "explanation": "Windows logs an RDP session as Logon Type 10 (RemoteInteractive) in Security 4624 — a value that, unlike Type 3 (Network) or Type 2 (Interactive), is used almost exclusively for RDP. That specificity makes it one of the more reliable baseline-able signals in this whole guide: a RemoteInteractive logon for an account or at a time inconsistent with that account's normal pattern is worth a look far more often than a generic network logon would be."
+        },
+        {
+          "term": "Why full GUI access changes the risk calculus",
+          "explanation": "Once an attacker has an RDP session, they don't need any additional tooling to be immediately productive — file explorer, a browser, whatever admin tools happen to be installed are all right there, exactly as a legitimate user would use them. That's precisely why internet-exposed RDP is treated as close to a hard no rather than a risk to be merely monitored: the cost of a successful compromise is a complete, no-extra-effort-required interactive session, not just a foothold."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Wizard Spider", "activity": "Leveraged RDP for lateral movement and ransomware deployment." },
+        { "actor": "Volt Typhoon", "activity": "Accessed domain controllers via RDP using compromised administrative privileges." },
+        { "actor": "APT28 (Nearest Neighbor Campaign)", "activity": "Deployed RDP for lateral movement during the campaign." },
+        { "actor": "APT41", "activity": "Moved laterally via RDP and exposed RDP ports using the NATBypass tool." },
+        { "actor": "ServHelper", "activity": "Includes commands for adding RDP users and establishing reverse SSH tunneling." }
+      ],
+      "data_sources": [
+        { "source": "Security 4624 (LogonType 10)", "detail": "RemoteInteractive logon — the core RDP session-establishment signal." },
+        { "source": "Security 4778 / 4779", "detail": "Session reconnected / disconnected events, useful for tracking a session's full lifetime including hijacked or resumed sessions." },
+        { "source": "Sysmon 3 / firewall logs", "detail": "Inbound TCP 3389 connections, especially from an external IP if RDP is (or shouldn't be) internet-facing." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "RemoteInteractive Logon Outside Normal Pattern",
+          "description": "Flags LogonType 10 (RDP) sessions for an account, filterable further against that account's normal source/host baseline.",
+          "query": "SecurityEvent\n| where EventID == 4624\n| where LogonType == 10\n| project TimeGenerated, Computer, TargetUserName, IpAddress, WorkstationName\n| order by TimeGenerated desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "RDP Logon from External or Unexpected Source",
+          "description": "Vendor-agnostic RemoteInteractive logon detection, intended to be scoped with an allowlist of expected jump-host/admin sources.",
+          "query": "title: RDP RemoteInteractive Logon\nid: 1d4a8c6e-3f7b-4c9d-8e2a-6b4f9c3d7e10\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: windows\n  service: security\ndetection:\n  selection:\n    EventID: 4624\n    LogonType: 10\n  condition: selection\nfalsepositives:\n  - Legitimate admin RDP sessions from known jump hosts or bastion servers -- scope this rule with a source allowlist rather than running it unfiltered\nlevel: low\ntags:\n  - attack.lateral_movement\n  - attack.t1021.001"
+        }
+      ],
+      "false_positives": [
+        "Legitimate administrative RDP sessions from known jump hosts, bastion servers, or help-desk workstations",
+        "Remote workforce users connecting to a designated RDP-accessible workstation as part of an approved remote-work setup"
+      ],
+      "response_steps": [
+        "Confirm the source IP/host against known admin jump hosts or approved remote-access infrastructure",
+        "Review what the session did — file access, tools run, further outbound connections initiated from within the RDP session",
+        "Check for session hijacking indicators (an existing session taken over rather than a fresh logon)",
+        "If RDP is internet-exposed, treat closing that exposure as the immediate priority alongside the specific incident response"
+      ],
+      "mitigations": [
+        { "id": "M1030", "name": "Network Segmentation", "detail": "Block RDP from internet exposure; restrict traffic between security zones." },
+        { "id": "M1035", "name": "Limit Access to Resource Over Network", "detail": "Deploy remote desktop gateways to restrict and centralize RDP access." },
+        { "id": "M1032", "name": "Multi-Factor Authentication", "detail": "Require MFA for remote login attempts." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Remove local Administrators from the RDP-allowed group where not required." }
+      ],
+      "related": [
+        { "id": "T1078.002", "name": "Domain Accounts", "relation": "The credential source that makes RDP lateral movement possible in the first place." },
+        { "id": "T1021.005", "name": "VNC", "relation": "The other GUI-based remote access path; attackers reach for whichever is already available on the target." }
+      ]
+    },
+    {
+      "id": "T1021.002",
+      "name": "SMB/Windows Admin Shares",
+      "tactic": "TA0008",
+      "tactic_name": "Lateral Movement",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1021/002/",
+      "overview": "Every Windows host exposes hidden administrative shares (C$, ADMIN$, IPC$) by default, reachable over SMB by anyone in the local Administrators group. Adversaries authenticate to these shares with valid credentials to copy files, then pair that file transfer with a second mechanism — a Scheduled Task, a Service, or WMI — to actually trigger execution, which is exactly what tools like PsExec and Impacket's smbexec automate end to end.",
+      "concepts": [
+        {
+          "term": "Admin shares are a feature, not a misconfiguration",
+          "explanation": "C$, ADMIN$, and IPC$ exist on every Windows install by default specifically so administrators can manage a machine remotely without needing separate file-sharing infrastructure. Nothing about their presence indicates anything has gone wrong — which is exactly why disabling them is listed as its own mitigation rather than something to \"fix\": the tradeoff is real administrative convenience versus attack surface, not a bug to patch."
+        },
+        {
+          "term": "Copying a file over SMB doesn't execute it — that's a second step",
+          "explanation": "Placing a binary on ADMIN$ via SMB is just a file transfer; nothing runs until something else triggers it. That's why the actual technique is almost always \"SMB copy + Scheduled Task/Service/WMI execution\" as a pair, not SMB alone — and why PsExec and smbexec bundle both steps into one tool. Detection built only around SMB share access misses half the story; the execution trigger that follows is just as important a signal."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "APT3", "activity": "Copied files to ADMIN$ shares for lateral movement." },
+        { "actor": "Wizard Spider", "activity": "Dropped a Cobalt Strike Beacon on domain controllers via SMB." },
+        { "actor": "Lazarus Group", "activity": "Accessed the ADMIN$ share via SMB for lateral movement." },
+        { "actor": "Sandworm Team", "activity": "Utilized net use commands to connect to network shares." },
+        { "actor": "Emotet", "activity": "Leverages Admin$, C$, and IPC$ shares for propagation." }
+      ],
+      "data_sources": [
+        { "source": "Security 5140 / 5145", "detail": "Network share object access, specifically to ADMIN$, C$, or IPC$ from a source host that isn't a known management/deployment system." },
+        { "source": "Sysmon 11 (FileCreate)", "detail": "File creation over the network onto ADMIN$/C$, especially of an executable, immediately followed by a service or scheduled task referencing that same file." },
+        { "source": "Security 7045 / 4698", "detail": "New service (7045) or scheduled task (4698) creation shortly after SMB file transfer — the execution-trigger half of this two-step pattern." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Executable Written to Admin Share Followed by Service Creation",
+          "description": "Flags the classic PsExec-style pattern: a file dropped on ADMIN$/C$ followed shortly by a new service referencing it.",
+          "query": "DeviceFileEvents\n| where Timestamp > ago(24h)\n| where FolderPath has_any (\"ADMIN$\", \"C$\")\n| where FileName endswith \".exe\"\n| join kind=inner (\n    DeviceEvents\n    | where ActionType == \"ServiceInstalled\"\n) on DeviceId\n| where (ServiceInstalled_Timestamp - Timestamp) between (0min .. 5min)\n| project Timestamp, DeviceName, FileName, InitiatingProcessAccountName"
+        },
+        {
+          "language": "XQL",
+          "title": "PsExec/smbexec-style Remote Service Execution (Cortex XDR)",
+          "description": "Cortex XDR equivalent flagging PsExec/smbexec process signatures alongside admin-share file activity.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_name ~= \"psexec.*\\.exe\" or action_process_image_command_line contains \"smbexec\"\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, event_timestamp"
+        }
+      ],
+      "false_positives": [
+        "Legitimate software deployment and patch management tooling (SCCM, remote admin scripts) that uses admin shares as their normal mechanism",
+        "IT staff running approved remote maintenance via PsExec-style tools under a documented change ticket"
+      ],
+      "response_steps": [
+        "Identify the file transferred to the admin share and the execution mechanism (service/task/WMI) that followed",
+        "Trace the source host and account used for the SMB connection",
+        "Check every other host the same account or tool touched via the same pattern",
+        "Remove the malicious service/task and any dropped binaries; verify no additional persistence was staged in the same session"
+      ],
+      "mitigations": [
+        { "id": "M1037", "name": "Filter Network Traffic", "detail": "Restrict SMB communications using host firewall rules." },
+        { "id": "M1035", "name": "Limit Access to Resource Over Network", "detail": "Disable Windows administrative shares where not operationally required." },
+        { "id": "M1027", "name": "Password Policies", "detail": "Enforce non-reusable, complex local admin passwords (LAPS)." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Deny remote use of local admin credentials; restrict local admin group membership." }
+      ],
+      "related": [
+        { "id": "T1078.003", "name": "Local Accounts", "relation": "Reused local admin passwords are a common credential source for admin-share access across many hosts." },
+        { "id": "T1003.002", "name": "Security Account Manager", "relation": "Where the local admin hash enabling this access is usually obtained." }
+      ]
+    },
+    {
+      "id": "T1021.003",
+      "name": "Distributed Component Object Model",
+      "tactic": "TA0008",
+      "tactic_name": "Lateral Movement",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1021/003/",
+      "overview": "DCOM extends Windows' Component Object Model over RPC, letting a client invoke methods on objects hosted on a remote machine. By default only administrators can remotely activate and launch COM objects, but a privileged user can leverage insecure methods on remotely-instantiated Office application objects to run macros, invoke Dynamic Data Exchange, or drive WMI — achieving code execution on a remote host without ever dropping a file to disk.",
+      "concepts": [
+        {
+          "term": "What DCOM actually lets a remote client do",
+          "explanation": "COM lets one piece of software call methods on another running on the same machine; DCOM removes the same-machine requirement using RPC as the transport. Access is governed by registry-based ACLs, not a separate authentication step — if your account is permitted to launch and access a given COM object per those ACLs, the object runs with your privileges, remotely, with no separate exploit needed. Office application objects are a favorite target specifically because instantiating one remotely and driving it via COM can execute a macro or invoke DDE without a document ever being visibly opened."
+        },
+        {
+          "term": "Port 135 as the network-level tell",
+          "explanation": "DCOM activation always negotiates over RPC endpoint mapper traffic on TCP 135 before the actual object method call happens on a dynamically assigned port. That means a remote DCOM launch produces a consistent, protocol-level signature — inbound 135 traffic followed by activity on a high ephemeral port — regardless of which specific COM object or method is being abused, which is why network segmentation and Windows Firewall (which blocks DCOM by default) are effective mitigations independent of what the attacker is actually trying to do with it."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Cobalt Strike", "activity": "Delivers Beacon payloads for lateral movement by leveraging remote COM execution." },
+        { "actor": "Empire", "activity": "Utilizes Invoke-DCOM to leverage remote COM execution for lateral movement." },
+        { "actor": "SILENTTRINITY", "activity": "Uses System namespace methods to execute lateral movement via DCOM." }
+      ],
+      "data_sources": [
+        { "source": "Network / RPC traffic", "detail": "Inbound TCP 135 (RPC endpoint mapper) followed by activity on a dynamically assigned high port, the DCOM activation signature." },
+        { "source": "Sysmon 1 / Security 4688", "detail": "Office application processes (excel.exe, winword.exe) or mmc.exe/wmiprvse.exe spawning unexpectedly, with a remote-originated parent chain." },
+        { "source": "Registry (offline forensics)", "detail": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Classes\\AppID and HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Ole permission changes, which govern who can remotely launch/access COM objects." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Suspicious Office Process Spawned via Remote DCOM Activation",
+          "description": "Flags Office applications launching without a normal user-initiated parent process, consistent with remote DCOM instantiation.",
+          "query": "title: Office Application Spawned via Remote DCOM\nid: 9c3e7a4d-5b8f-4c1e-8a2d-6f9c3b7e4a10\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\excel.exe'\n      - '\\winword.exe'\n  filter_normal_parent:\n    ParentImage|endswith: '\\explorer.exe'\n  condition: selection and not filter_normal_parent\nfalsepositives:\n  - Legitimate automation tooling that launches Office applications programmatically (mail-merge, reporting tools)\nlevel: medium\ntags:\n  - attack.lateral_movement\n  - attack.t1021.003"
+        }
+      ],
+      "false_positives": [
+        "Legitimate business automation (mail-merge, reporting, document generation tooling) that launches Office applications programmatically via COM",
+        "IT administration scripts that use DCOM for approved remote management tasks"
+      ],
+      "response_steps": [
+        "Identify the source host that initiated the DCOM connection via the port 135 traffic",
+        "Determine which COM object/method was invoked and what it did on the target (macro execution, DDE, WMI)",
+        "Check the target's registry AppID/Ole permissions for any recent unauthorized changes",
+        "Review whether Windows Firewall's default DCOM block was disabled or an exception was added that shouldn't exist"
+      ],
+      "mitigations": [
+        { "id": "M1048", "name": "Application Isolation and Sandboxing", "detail": "Enable COM alerts and Protected View in Office." },
+        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Disable DCOM via Dcomcnfg.exe where not required." },
+        { "id": "M1030", "name": "Network Segmentation", "detail": "Enable Windows Firewall, which blocks DCOM by default." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict registry-based COM/DCOM launch and access permissions to the accounts that actually need them." }
+      ],
+      "related": [
+        { "id": "T1059.005", "name": "Visual Basic", "relation": "The macro/DDE payload a remotely-instantiated Office COM object is often used to trigger." }
+      ]
+    },
+    {
+      "id": "T1021.004",
+      "name": "SSH",
+      "tactic": "TA0008",
+      "tactic_name": "Lateral Movement",
+      "platforms": ["Linux", "macOS", "ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1021/004/",
+      "overview": "SSH ships on nearly every Linux and macOS system and can be enabled on ESXi hosts directly or via vCenter, giving an authenticated user a command-line session on the remote host with whatever privileges that account holds. Because SSH is the standard, expected admin tool on these platforms — unlike RDP on Windows, which ordinary users rarely touch — an SSH-based lateral movement session carries very little inherent suspicion on its own.",
+      "concepts": [
+        {
+          "term": "Why SSH abuse blends in more than RDP abuse does",
+          "explanation": "On Windows, RDP usage by anyone other than IT is already somewhat unusual, which gives defenders a useful baseline. SSH is the opposite: it's the routine way legitimate administrators, deployment pipelines, and monitoring agents interact with Linux/macOS/ESXi hosts constantly. That means detection here can't lean on \"SSH connection happened\" at all — it has to focus entirely on who's connecting, from where, and what they do once inside, since the protocol itself is used identically by attackers and admins alike."
+        },
+        {
+          "term": "Salt Typhoon's loopback trick as a case study in ACL bypass",
+          "explanation": "Salt Typhoon modified a compromised switch's loopback interface address specifically so their SSH connections would appear to originate from a trusted internal address rather than their real source — defeating access control lists scoped to \"only accept SSH from these expected internal ranges.\" It's a concrete illustration of a broader point: source-IP-based SSH restrictions are only as strong as the assumption that the visible source IP reflects where a connection actually originated, and on network infrastructure the attacker already controls, that assumption can be deliberately broken."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Scattered Spider", "activity": "Employed SSH for lateral movement and vSphere vCenter GUI access." },
+        { "actor": "APT5", "activity": "Used SSH to traverse compromised environments and access ESXi hosts." },
+        { "actor": "Lazarus Group", "activity": "Used SSH and PuTTY's PSCP utility to access restricted network segments." },
+        { "actor": "Salt Typhoon", "activity": "Modified switch loopback addresses as SSH connection sources to bypass ACLs." },
+        { "actor": "Kinsing", "activity": "Leveraged SSH for lateral movement across compromised cloud/container environments." }
+      ],
+      "data_sources": [
+        { "source": "auth.log / secure (Linux)", "detail": "SSH logon events, especially for accounts or from sources inconsistent with that account's normal pattern; password-based auth where key-based is expected." },
+        { "source": "ESXi shell.log + auth.log", "detail": "SSH-based shell access on ESXi hosts, correlated with the commands run once connected." },
+        { "source": "macOS Unified Logs", "detail": "SSH logons via Remote Login, correlated with subsequent process activity." }
+      ],
+      "detection_queries": [
+        {
+          "language": "auditd",
+          "title": "SSH Session Followed by Sensitive Command Execution",
+          "description": "Base auditd rule to correlate an SSH-originated shell (sshd parent) with subsequent sensitive command execution.",
+          "query": "auditctl -a always,exit -F arch=b64 -S execve -F ppid_type=sshd -F key=ssh_post_login"
+        },
+        {
+          "language": "Sigma",
+          "title": "SSH Login from Unexpected Source",
+          "description": "Flags successful SSH authentication from a source IP outside a defined allowlist of expected admin/jump-host ranges.",
+          "query": "title: SSH Login from Unexpected Source\nid: 2f9c6a4e-8b3d-4c7f-9e1a-5d3b8c6f9a20\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: linux\n  service: auth\ndetection:\n  selection:\n    - 'Accepted'\n  condition: selection\nfalsepositives:\n  - Legitimate administrative access from known jump hosts or bastion servers -- scope this rule against a source-IP allowlist rather than running it unfiltered\nlevel: low\ntags:\n  - attack.lateral_movement\n  - attack.t1021.004"
+        }
+      ],
+      "false_positives": [
+        "Routine administrative SSH access from known jump hosts, bastion servers, or CI/CD deployment pipelines",
+        "Monitoring and configuration-management agents that legitimately SSH into many hosts on a schedule"
+      ],
+      "response_steps": [
+        "Identify the source of the SSH connection and whether it's a known/expected admin path",
+        "Review the full command history for that session via auditd or shell logging",
+        "Check whether the connecting account's key or password was recently exposed elsewhere (T1003 dump, phishing)",
+        "On ESXi, correlate shell.log with auth.log to confirm which authenticated session issued which commands"
+      ],
+      "mitigations": [
+        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Disable the SSH daemon on non-essential systems, particularly ESXi servers where not required." },
+        { "id": "M1032", "name": "Multi-factor Authentication", "detail": "Require MFA for SSH connections, such as password-protected SSH keys." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Restrict SSH login permissions to the specific accounts that need them." }
+      ],
+      "related": [
+        { "id": "T1059.004", "name": "Unix Shell", "relation": "The interactive shell an SSH session hands the attacker once authenticated." },
+        { "id": "T1059.012", "name": "Hypervisor CLI", "relation": "On ESXi specifically, SSH access is the usual entry point before esxcli/vim-cmd abuse." }
+      ]
+    },
+    {
+      "id": "T1021.005",
+      "name": "VNC",
+      "tactic": "TA0008",
+      "tactic_name": "Lateral Movement",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1021/005/",
+      "overview": "VNC (Virtual Network Computing, using the RFB protocol) is screen-sharing rather than a full remote session negotiation — it mirrors an existing display rather than creating a new one the way RDP does. Since it isn't installed by default on Windows, VNC-based lateral movement often starts with the attacker dropping their own VNC server (TightVNC, UltraVNC) onto the target, which shifts the detection question toward \"why does unexpected VNC server software exist here\" rather than \"is a built-in feature being abused.\"",
+      "concepts": [
+        {
+          "term": "Screen sharing vs. session creation",
+          "explanation": "RDP negotiates a session — it can create a brand-new desktop session independent of whoever's physically logged in. VNC's original design is to mirror the display that's already there, which in some configurations means the legitimate user's actual screen is literally what the attacker sees in real time, potentially without the user immediately noticing anything different is happening at all. That distinction is why VNC is sometimes preferred for reconnaissance-style lateral movement — watching what a user does — rather than pure command execution."
+        },
+        {
+          "term": "Why 'unexpected VNC server' is often the whole signal",
+          "explanation": "Because Windows carries no built-in VNC server, its presence on a host at all is frequently the tell — legitimate remote-support VNC deployments are usually a known, inventoried, deliberate choice, not something that shows up unannounced. That's why the primary mitigations here are audit (find unauthorized installs) and limiting software installation rather than protocol-level restrictions the way RDP/SSH get: the fix is mostly about not letting the software exist in the first place."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "FIN7", "activity": "Deploys TightVNC for control of compromised hosts." },
+        { "actor": "Fox Kitten", "activity": "Installs TightVNC server/client on compromised infrastructure for lateral movement." },
+        { "actor": "TrickBot", "activity": "Implements a VNC module for victim monitoring and network reconnaissance." },
+        { "actor": "Gamaredon Group", "activity": "Utilizes UltraVNC and other VNC tools for interactive host engagement." },
+        { "actor": "GCMAN", "activity": "Employs VNC for lateral movement operations." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 1 / Security 4688", "detail": "Execution of known VNC server binaries (tvnserver.exe, winvnc.exe, uvnc-related processes) not part of the standard software inventory." },
+        { "source": "Network / firewall logs", "detail": "Traffic on default VNC ports 5900 (server), 5800 (browser-based), or 5500 (listening mode), especially inbound from an unexpected source." },
+        { "source": "macOS Unified Logs", "detail": "screensharingd activity correlated with a concurrent remote logon, the macOS built-in VNC-compatible screen sharing mechanism." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Unauthorized VNC Server Execution",
+          "description": "Flags execution of common third-party VNC server binaries not part of an approved remote-support tool inventory.",
+          "query": "title: Unauthorized VNC Server Execution\nid: 5a8c3e9d-7b4f-4c2e-9d1a-6f8b3c9e5a30\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\tvnserver.exe'\n      - '\\winvnc.exe'\n      - '\\vncserver.exe'\n  condition: selection\nfalsepositives:\n  - Approved remote-support software using a VNC-based engine, if inventoried and expected on this host\nlevel: medium\ntags:\n  - attack.lateral_movement\n  - attack.t1021.005"
+        }
+      ],
+      "false_positives": [
+        "Approved IT remote-support tooling that uses a VNC-compatible engine under the hood, if properly inventoried",
+        "Legitimate use of macOS Screen Sharing (screensharingd) for authorized remote administration"
+      ],
+      "response_steps": [
+        "Confirm whether the VNC server software is part of the approved software inventory for that host",
+        "If unauthorized, identify how and when it was installed, and what was accessed during any active session",
+        "Remove the unauthorized VNC installation and check for persistence (auto-start entries) tied to it",
+        "Audit the broader environment for the same software across other hosts using the same installer/hash"
+      ],
+      "mitigations": [
+        { "id": "M1047", "name": "Audit", "detail": "Inventory systems for unauthorized VNC server installations." },
+        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Uninstall unnecessary VNC server software." },
+        { "id": "M1037", "name": "Filter Network Traffic", "detail": "Block default VNC ports (5900, 5800, 5500) at the network boundary." },
+        { "id": "M1033", "name": "Limit Software Installation", "detail": "Restrict VNC installation privileges to required user groups only." }
+      ],
+      "related": [
+        { "id": "T1021.001", "name": "Remote Desktop Protocol", "relation": "The other GUI-based lateral movement path; attackers pick whichever is available on the target." }
+      ]
+    },
+    {
+      "id": "T1021.006",
+      "name": "Windows Remote Management",
+      "tactic": "TA0008",
+      "tactic_name": "Lateral Movement",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1021/006/",
+      "overview": "WinRM is the Windows service and protocol that underlies PowerShell Remoting — Invoke-Command and Enter-PSSession use it by default — letting an authenticated user execute programs, modify the registry, manage services, and drive WMI on a remote host. Because it's PowerShell's own remoting mechanism, \"PowerShell Remoting abuse\" and \"WinRM abuse\" describe the exact same activity from two different angles.",
+      "concepts": [
+        {
+          "term": "wsmprovhost.exe: the one-process fingerprint",
+          "explanation": "Every remote PowerShell session — whether started via Enter-PSSession, Invoke-Command, or a tool like Evil-WinRM — spawns commands under wsmprovhost.exe (the WinRM provider host process) on the target. The typical process chain is svchost.exe → wsmprovhost.exe → whatever the attacker actually ran. That makes wsmprovhost.exe as a parent process one of the most reliable single-process fingerprints in this entire pack, functionally playing the same role for WinRM that a specific LSASS GrantedAccess mask plays for T1003.001."
+        },
+        {
+          "term": "Why mitigating this means touching WinRM config, not PowerShell itself",
+          "explanation": "Because PowerShell Remoting is WinRM under the hood, restricting it isn't a PowerShell-specific setting — it means disabling the WinRM service, tightening its TrustedHosts configuration, or firewalling ports 5985/5986 (HTTP/HTTPS). Someone trying to 'disable PowerShell Remoting' by touching PowerShell execution policy alone will find WinRM itself, and every other tool that rides on it, completely untouched."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "APT29 (SolarWinds Compromise)", "activity": "Executed commands and payloads using PowerShell over WinRM." },
+        { "actor": "Storm-0501", "activity": "Deployed the Evil-WinRM tool for PowerShell-based remote code execution." },
+        { "actor": "Wizard Spider", "activity": "Conducted lateral movement via Windows Remote Management." },
+        { "actor": "Chimera", "activity": "Utilized WinRM to move laterally across networks." },
+        { "actor": "Cobalt Strike", "activity": "Executes payloads on remote hosts via WinRM." }
+      ],
+      "data_sources": [
+        { "source": "WinRM Operational log, Event 91", "detail": "\"Creating WSMan shell on server\" — logged on the target host for every successful remote WinRM connection." },
+        { "source": "Sysmon 1", "detail": "Child processes spawned under wsmprovhost.exe, especially cmd.exe, powershell.exe, or other unexpected tooling." },
+        { "source": "Security 5156", "detail": "Allowed network connections on ports 5985 (HTTP) or 5986 (HTTPS), the WinRM listener ports." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Suspicious Child Process Under wsmprovhost.exe",
+          "description": "Flags command execution spawned from the WinRM provider host process — the process-tree fingerprint of remote PowerShell/WinRM abuse.",
+          "query": "DeviceProcessEvents\n| where Timestamp > ago(24h)\n| where InitiatingProcessFileName =~ \"wsmprovhost.exe\"\n| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine\n| order by Timestamp desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "Process Spawned from WinRM Host (wsmprovhost.exe)",
+          "description": "Vendor-agnostic version of the wsmprovhost.exe parent-process check.",
+          "query": "title: Process Spawned from WinRM Host Process\nid: 7e3c9a4d-6b8f-4c1e-9a2d-5f7c9b3e6a40\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    ParentImage|endswith: '\\wsmprovhost.exe'\n  condition: selection\nfalsepositives:\n  - Legitimate PowerShell Remoting used by IT admins and automation for approved remote management\nlevel: medium\ntags:\n  - attack.lateral_movement\n  - attack.t1021.006"
+        }
+      ],
+      "false_positives": [
+        "Legitimate PowerShell Remoting used by IT administrators for day-to-day remote management",
+        "Configuration management tooling (DSC, Ansible's WinRM connector) that relies on WinRM as its normal transport"
+      ],
+      "response_steps": [
+        "Identify the source host and account that established the WinRM session via Event 91 on the target",
+        "Review the full command history spawned under wsmprovhost.exe for that session",
+        "Check TrustedHosts configuration on the target for unauthorized additions",
+        "Confirm whether WinRM is exposed beyond what's operationally necessary and tighten firewall rules on 5985/5986 accordingly"
+      ],
+      "mitigations": [
+        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Deactivate the WinRM service entirely where not required." },
+        { "id": "M1030", "name": "Network Segmentation", "detail": "Restrict WinRM access to specific devices via firewall rules; isolate critical systems." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Use dedicated, limited-permission WinRM accounts for critical enclaves rather than broad admin credentials." }
+      ],
+      "related": [
+        { "id": "T1059.001", "name": "PowerShell", "relation": "WinRM is the transport PowerShell Remoting (Invoke-Command, Enter-PSSession) actually runs over." }
+      ]
+    },
+    {
+      "id": "T1021.007",
+      "name": "Cloud Services",
+      "tactic": "TA0008",
+      "tactic_name": "Lateral Movement",
+      "platforms": ["IaaS", "Identity Provider", "SaaS", "Office Suite"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1021/007/",
+      "overview": "A synced or federated identity works against cloud consoles and CLIs (Azure PowerShell's Connect-AzAccount, Microsoft Graph's Connect-MgGraph, gcloud auth login) exactly the way it works on-premises, which means an attacker with valid cloud credentials can move from one cloud service to another — or from an on-prem foothold straight into cloud infrastructure — without needing any network adjacency to the target at all.",
+      "concepts": [
+        {
+          "term": "Federated identity dissolves the network-adjacency requirement",
+          "explanation": "Every other sub-technique in this pack requires the attacker to actually reach the target over a network — the same segment, a routable path, something. Cloud console/CLI access requires none of that: a valid Azure AD, AWS IAM, or Google Workspace credential authenticates from anywhere on the internet directly to the cloud provider's own API. \"Lateral movement\" here means moving between services and privilege levels within the cloud tenant, not moving across physical or virtual network boundaries at all."
+        },
+        {
+          "term": "CLI-based access changes what telemetry actually exists",
+          "explanation": "A lot of this activity is CLI-driven (Connect-AzAccount, gcloud auth login, aws configure) rather than an interactive console session with a browser fingerprint. That pushes almost all the relevant detection surface into cloud audit logs — sign-in events correlated with the API calls that follow — since there's no traditional network packet capture or endpoint process tree spanning the actual lateral hop the way there would be for RDP or SSH."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "APT29", "activity": "Leveraged compromised high-privileged on-premises accounts synced to Office 365 for lateral cloud movement via Azure AD PowerShell." },
+        { "actor": "Scattered Spider", "activity": "Used Azure credentials for lateral movement and exploited pre-existing AWS EC2 instances." },
+        { "actor": "Storm-0501", "activity": "Utilized a compromised Entra Connect Sync Server for environment-wide lateral movement." },
+        { "actor": "Mini Shai-Hulud", "activity": "Accessed and propagated to AWS EC2 instances via SSM Send-Command." }
+      ],
+      "data_sources": [
+        { "source": "Azure AD / Entra sign-in logs", "detail": "Atypical geolocation or user-agent cloud logins followed immediately by resource or directory enumeration." },
+        { "source": "Cloud audit logs (CloudTrail / Azure Activity / GCP Audit)", "detail": "CLI-based authentication (Connect-AzAccount, gcloud auth login) from an unexpected source, correlated with the API calls that follow." },
+        { "source": "M365 / Google Workspace audit logs", "detail": "Mailbox or document access via CLI/API from a source inconsistent with that user's normal client application pattern." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "CLI-Based Cloud Authentication from Unexpected Source",
+          "description": "Flags Azure AD sign-ins using CLI/PowerShell client applications from a source IP or location outside the account's established pattern.",
+          "query": "SigninLogs\n| where AppDisplayName in (\"Azure PowerShell\", \"Azure CLI\", \"Microsoft Graph PowerShell\")\n| where ResultType == 0\n| project TimeGenerated, UserPrincipalName, AppDisplayName, IPAddress, Location=tostring(LocationDetails.city)\n| order by TimeGenerated desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate DevOps/automation pipelines authenticating via CLI as part of normal infrastructure-as-code workflows",
+        "IT administrators using Azure/AWS/GCP CLI tools for approved remote administration from a home or travel location"
+      ],
+      "response_steps": [
+        "Identify the identity used and whether it's a synced/federated account bridging on-prem and cloud",
+        "Review the full sequence of API calls made after authentication, not just the sign-in event itself",
+        "Check for privilege escalation via role/policy changes made during the session",
+        "If Entra Connect or an equivalent sync service was involved, treat both cloud and on-premises environments as potentially affected"
+      ],
+      "mitigations": [
+        { "id": "M1032", "name": "Multi-factor Authentication", "detail": "Apply MFA across all cloud services, including CLI-based authentication paths." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Prevent on-premises accounts from holding cloud permissions directly; use isolated cloud-only administrative accounts." }
+      ],
+      "related": [
+        { "id": "T1078.004", "name": "Cloud Accounts", "relation": "The credential compromise that makes this lateral movement path possible." },
+        { "id": "T1059.009", "name": "Cloud API", "relation": "The same CLI/API surface, viewed from the execution angle rather than the movement angle." }
+      ]
+    },
+    {
+      "id": "T1021.008",
+      "name": "Direct Cloud VM Connections",
+      "tactic": "TA0008",
+      "tactic_name": "Lateral Movement",
+      "platforms": ["IaaS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1021/008/",
+      "overview": "Cloud providers offer native, out-of-band ways to reach a VM's console directly — Azure Serial Console, AWS EC2 Instance Connect, AWS Systems Manager — that bypass the VM's actual network interface entirely, connecting through the cloud provider's own management plane instead. Several of these mechanisms are built for break-glass recovery scenarios and grant SYSTEM or root access by default, which means compromising the cloud identity that can invoke them is equivalent to already having full administrative access to the VM.",
+      "concepts": [
+        {
+          "term": "Why this bypasses network and host-based defenses entirely",
+          "explanation": "Azure Serial Console, EC2 Instance Connect, and Systems Manager don't connect to the VM over its normal network interface at all — they connect through the cloud provider's control plane, out-of-band from anything the VM's own firewall, network security group, or NACLs could ever see or block. A host that's completely locked down at the network level is still fully reachable this way, because the connection was never subject to that network's rules in the first place."
+        },
+        {
+          "term": "Why default SYSTEM/root access is the real danger, not just the access itself",
+          "explanation": "Unlike RDP or SSH, which authenticate as whatever account was used and grant that account's actual privileges, several of these features are specifically designed as an emergency recovery path and hand over SYSTEM or root by default regardless of the connecting identity's normal permissions. That means an attacker doesn't need a separate privilege escalation step once they can invoke the feature at all — the cloud IAM permission to use Serial Console or Instance Connect is itself equivalent to full administrative compromise of the target VM."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Scattered Spider", "activity": "Leveraged SaaS and cloud environment access as part of broader cloud-native intrusion operations, consistent with abuse of native cloud VM connection methods." }
+      ],
+      "data_sources": [
+        { "source": "Cloud audit logs (CloudTrail / Azure Activity)", "detail": "Invocation of EC2 Instance Connect, Systems Manager Send-Command/Session, or Azure Serial Console access, correlated with the IAM identity that triggered it." },
+        { "source": "IAM policy / role activity", "detail": "Permissions changes granting an identity access to these direct-connect features, which is itself worth monitoring as a precursor." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "AWS Systems Manager Session Started on Production Instance",
+          "description": "Flags SSM Start-Session/Send-Command invocations, a native direct-VM-access mechanism worth scoping to expected automation identities only.",
+          "query": "title: AWS SSM Session Started\nid: 3d8b6a4c-9f2e-4c7a-8d1b-6f3a9c8e2d50\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: cloud\n  product: aws\n  service: cloudtrail\ndetection:\n  selection:\n    eventName:\n      - 'StartSession'\n      - 'SendCommand'\n  condition: selection\nfalsepositives:\n  - Legitimate automation/DevOps pipelines using SSM as their standard remote management mechanism\nlevel: medium\ntags:\n  - attack.lateral_movement\n  - attack.t1021.008"
+        }
+      ],
+      "false_positives": [
+        "Legitimate DevOps/automation pipelines that use Systems Manager or Instance Connect as their standard, approved VM access mechanism",
+        "Break-glass recovery use by cloud infrastructure administrators during a genuine outage"
+      ],
+      "response_steps": [
+        "Identify the IAM identity that invoked the direct-connect feature and how it obtained that permission",
+        "Treat this as equivalent to full administrative compromise of the target VM given the default SYSTEM/root access these features grant",
+        "Review IAM policy for how broadly this permission is granted and scope it down to only the automation identities that genuinely need it",
+        "Check CloudTrail/Activity logs for what commands were run during the session"
+      ],
+      "mitigations": [
+        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Deactivate direct VM connection features when not administratively necessary." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Restrict IAM permissions for these native access methods to the minimum set of identities that require them." }
+      ],
+      "related": [
+        { "id": "T1078.004", "name": "Cloud Accounts", "relation": "The IAM identity compromise that grants the permission to invoke these direct connection features in the first place." }
+      ]
+    }
+  ]
+}

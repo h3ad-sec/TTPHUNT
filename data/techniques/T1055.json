@@ -1,0 +1,669 @@
+{
+  "id": "T1055",
+  "name": "Process Injection",
+  "tactic": "TA0005",
+  "tactic_name": "Defense Evasion",
+  "platforms": ["Windows", "Linux", "macOS"],
+  "mitre_url": "https://attack.mitre.org/techniques/T1055/",
+  "overview": "Adversaries execute arbitrary code inside the address space of a separate, already-running process. The code inherits that host process's identity — its code-signing reputation, its network access rules, its position on any allow-list, and often its privileges — while masking execution under a name that looks completely legitimate to anything checking process names or file signatures. The 12 sub-techniques below split largely by platform and by which specific OS mechanism gets abused to get code running inside someone else's process: Windows thread/PE-loader APIs for most of them, and Linux's debugging (ptrace) or dynamic-linking (vDSO/GOT) internals for the rest.",
+  "prerequisite_concepts": [
+    {
+      "term": "Why nearly every mitigation here is the same one",
+      "explanation": "Look through the mitigations on each sub-technique below and you'll see M1040 (Behavior Prevention on Endpoint) again and again, often as the only one listed. That's not an oversight — every API this pack abuses (VirtualAllocEx, WriteProcessMemory, CreateRemoteThread, ptrace, window messaging) exists for entirely legitimate reasons: debuggers, DLL loaders, accessibility tools, automation frameworks. There's no \"disable this feature\" switch the way there is for WinRM or VNC. The only real defense is behavioral — watching for the specific sequence of otherwise-ordinary calls that, together, only makes sense as injection."
+    },
+    {
+      "term": "The point isn't what the code does — it's whose name it runs under",
+      "explanation": "A security tool asking \"is explorer.exe malicious\" will always answer no, correctly, because explorer.exe genuinely isn't the malicious file on disk. The entire value of every technique in this pack is that the resulting execution happens inside a process whose reputation, signature, and permissions were never actually compromised — only borrowed for the duration of the injected code's execution."
+    },
+    {
+      "term": "The common three-step skeleton most Windows sub-techniques share",
+      "explanation": "Open a handle to the target (OpenProcess/OpenThread), get code into its memory (VirtualAllocEx + WriteProcessMemory, or an equivalent), then trigger execution. That last step is where most of the sub-techniques below actually differ: CreateRemoteThread is the textbook version, but QueueUserAPC, SetThreadContext+ResumeThread, a TLS callback, or a window message can all substitute for it — usually specifically because CreateRemoteThread itself has become so well monitored that alternatives are worth the extra complexity."
+    },
+    {
+      "term": "Sysmon covers this family, but not by default",
+      "explanation": "Sysmon Event 8 (CreateRemoteThread) ships active in any standard Sysmon deployment and is one of the highest-signal, lowest-volume events available — legitimate software essentially never calls this API. Sysmon Event 25 (ProcessTampering, covering hollowing and herpaderping) is different: it is not enabled by default and has to be deliberately added to the Sysmon configuration. A team assuming \"we run Sysmon so we're covered\" may specifically be missing the one event type built for T1055.012 and T1055.013 below."
+    },
+    {
+      "term": "Why the Linux-only sub-techniques don't share a detection story with the Windows ones",
+      "explanation": "T1055.008 (ptrace), T1055.009 (/proc memory), and T1055.014 (vDSO hijacking) abuse completely different OS internals than the PE-loader and thread-API mechanics the Windows sub-techniques rely on — the debugging interface and the ELF dynamic-linking mechanism, respectively. The high-level goal (run code inside another process) is identical, but the actual mechanism, and therefore what to hunt for, has essentially nothing in common across the platform split."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1055.001",
+      "name": "Dynamic-link Library Injection",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/001/",
+      "overview": "The textbook process injection technique: write a DLL's path (or its raw bytes, for reflective injection) into a target process's memory, then force that process to load it via a remote thread. It's implemented by an enormous share of real-world malware — from commodity loaders to APT toolkits — precisely because it's simple, well-documented, and works against almost any target process.",
+      "concepts": [
+        {
+          "term": "The classic three-API skeleton",
+          "explanation": "VirtualAllocEx allocates memory in the target process, WriteProcessMemory writes the DLL's path string into that memory, and CreateRemoteThread starts a new thread in the target that calls LoadLibrary on that path. This exact sequence is the foundational pattern nearly every other Windows sub-technique in this pack is a variation of — later techniques mostly swap out the trigger step (CreateRemoteThread) for something else, precisely because this specific combination is now so heavily monitored."
+        },
+        {
+          "term": "Reflective injection removes the disk dependency entirely",
+          "explanation": "Classic injection still needs a real DLL file to exist on disk somewhere, even briefly, since LoadLibrary loads from a path. Reflective DLL injection instead manually maps the DLL's bytes directly into the target's memory and resolves its own imports without ever calling LoadLibrary or touching disk — which is exactly why \"entirely in-memory\" shows up constantly in this sub-technique's procedure examples, and why file-based detection has nothing to find in these cases at all."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Cobalt Strike", "activity": "Loads DLLs via reflective injection as a core capability." },
+        { "actor": "Stuxnet", "activity": "Injects an entire DLL into existing, new, or preselected trusted processes." },
+        { "actor": "Turla", "activity": "Used Metasploit for reflective DLL injection to escalate privileges." },
+        { "actor": "Wizard Spider", "activity": "Injected malicious DLLs with read/write/execute permissions into target processes." },
+        { "actor": "ShadowPad", "activity": "Injected its DLL into svchost.exe." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 8 (CreateRemoteThread)", "detail": "A process creating a remote thread in another process — rare in legitimate software, one of the highest-signal single events available for this whole pack." },
+        { "source": "Sysmon 7 (Image loaded)", "detail": "An unsigned or unusually-located DLL loaded into a process that doesn't normally load third-party modules." },
+        { "source": "Sysmon 10 (ProcessAccess)", "detail": "A GrantedAccess mask consistent with VirtualAllocEx/WriteProcessMemory rights against the target process, preceding the remote thread creation." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "CreateRemoteThread into a Non-Standard Target Process",
+          "description": "Flags Sysmon 8 CreateRemoteThread events targeting processes that shouldn't normally receive injected threads from unrelated software.",
+          "query": "title: CreateRemoteThread Detected\nid: 4c8e9a3d-6b2f-4e7a-9c1d-3f8b6a2e9c50\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: create_remote_thread\n  product: windows\ndetection:\n  selection:\n    TargetImage|endswith:\n      - '\\explorer.exe'\n      - '\\svchost.exe'\n      - '\\lsass.exe'\n      - '\\winlogon.exe'\n  filter_known_tools:\n    SourceImage|endswith:\n      - '\\procexp.exe'\n      - '\\procexp64.exe'\n  condition: selection and not filter_known_tools\nfalsepositives:\n  - Legitimate debugging and process-monitoring tools (Process Explorer, debuggers) that use CreateRemoteThread by design\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.001"
+        }
+      ],
+      "false_positives": [
+        "Legitimate debugging tools, EDR agents, and process-monitoring software that use CreateRemoteThread as part of their normal function",
+        "Some DRM and anti-cheat software injects DLLs into games/applications as an expected, documented behavior"
+      ],
+      "response_steps": [
+        "Identify both the source process (doing the injecting) and the target — the source is usually the actual malicious binary worth focusing analysis on",
+        "Pull the injected DLL/module from memory for analysis if it never touched disk",
+        "Check what the injected code did once running — network connections, credential access, further injection",
+        "Terminate the source process and any child processes it spawned before it can re-inject elsewhere"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on the VirtualAllocEx/WriteProcessMemory + CreateRemoteThread behavioral sequence loading an unsigned or suspicious DLL." }
+      ],
+      "related": [
+        { "id": "T1003.001", "name": "LSASS Memory", "relation": "Mimikatz's own credential-dumping modules are frequently loaded into a host process via exactly this technique rather than run as a standalone binary." }
+      ]
+    },
+    {
+      "id": "T1055.002",
+      "name": "Portable Executable Injection",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/002/",
+      "overview": "Rather than injecting a DLL and letting Windows' own loader handle it, this variant writes an entire portable executable — or raw shellcode structured like one — directly into a target process's memory and executes it via a remote thread, using a custom in-memory loader the payload itself carries rather than any OS DLL-loading convention.",
+      "concepts": [
+        {
+          "term": "Why skipping the DLL loader matters",
+          "explanation": "DLL injection still leans on Windows' own LoadLibrary machinery, which imposes real structure (proper exports, standard loading conventions). PE injection instead brings its own minimal loader that manually resolves imports and fixes up relocations for a full executable image — giving the attacker a complete, self-contained payload with none of the constraints or file-on-disk requirements DLL loading implies, which is exactly why \"executes entirely in memory\" appears so consistently across this sub-technique's malware examples."
+        },
+        {
+          "term": "The MZ header as a memory-scanning tell",
+          "explanation": "Because this technique writes actual PE-structured data — including the MZ/PE header — into remote memory rather than pure unstructured shellcode, a memory scanner looking specifically for the MZ magic bytes in an executable memory region that isn't backed by a file on disk has a concrete, reliable signature to hunt for. Pure shellcode-only injection techniques don't leave that same structural fingerprint behind."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "AppleJeus (3CX Attack)", "activity": "Employed the SigFlip tool to inject code while maintaining file signature integrity." },
+        { "actor": "Havoc", "activity": "Injects itself into system processes like WerFault.exe." },
+        { "actor": "Zeus Panda", "activity": "Scans system processes and injects into those meeting its targeting requirements." },
+        { "actor": "InvisiMole", "activity": "Injects its backdoor as a portable executable into target processes." },
+        { "actor": "RustyWater", "activity": "Injects shellcode into explorer.exe via VirtualAllocEx and WriteProcessMemory." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 8 (CreateRemoteThread)", "detail": "Remote thread creation following memory writes containing PE-structured (MZ-header) data rather than a DLL path string." },
+        { "source": "EDR memory scanning", "detail": "Executable memory regions with a valid MZ/PE header that aren't backed by any file on disk (\"unbacked\" executable memory)." },
+        { "source": "Sysmon 10 (ProcessAccess)", "detail": "OpenProcess with PROCESS_VM_WRITE/PROCESS_CREATE_THREAD rights preceding the write." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Unbacked Executable Memory with PE Header (Memory Scan)",
+          "description": "Flags EDR memory-scan findings of MZ-header-prefixed executable memory not backed by any on-disk file — the structural PE-injection signature.",
+          "query": "title: Unbacked Executable Memory with PE Header\nid: 7f3a9c6d-4e8b-4c2a-9d7f-6b3a8c9e4d70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: memory_scan\n  product: windows\ndetection:\n  selection:\n    memory.protection: 'PAGE_EXECUTE_READWRITE'\n    memory.header_magic: 'MZ'\n    memory.file_backed: false\n  condition: selection\nfalsepositives:\n  - JIT compilers and some legitimate application frameworks that allocate unbacked executable memory as part of normal operation\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.002"
+        }
+      ],
+      "false_positives": [
+        "JIT compilers (.NET, Java, browser JavaScript engines) that legitimately allocate unbacked executable memory as part of normal operation",
+        "Legitimate packers and self-extracting installers that unpack executable code into memory before running it"
+      ],
+      "response_steps": [
+        "Extract the injected PE image from memory for static/dynamic analysis",
+        "Identify the source process responsible for the injection, not just the target that received it",
+        "Check for a custom in-memory loader component in the source binary, which is often the more distinctive artifact",
+        "Hunt for the same source binary's hash across the rest of the environment"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on OpenProcess + VirtualAllocEx + WriteProcessMemory writing PE-header data, followed by remote thread creation." }
+      ],
+      "related": [
+        { "id": "T1055.001", "name": "Dynamic-link Library Injection", "relation": "The closest sibling technique — same delivery mechanism, differing in whether a DLL or a full PE image is what gets injected." }
+      ]
+    },
+    {
+      "id": "T1055.003",
+      "name": "Thread Execution Hijacking",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/003/",
+      "overview": "Instead of creating a new thread, this technique hijacks one that already exists: suspend a thread in an already-running target process, overwrite its memory with malicious code, redirect its instruction pointer via SetThreadContext, and resume it. Because it targets a process already doing real work rather than creating anything new, there's no new-process or new-thread creation event to catch — only a suspend/modify/resume sequence.",
+      "concepts": [
+        {
+          "term": "Existing process, existing thread — the key distinction from hollowing",
+          "explanation": "MITRE draws a specific line here: Thread Execution Hijacking targets a thread inside a process that was already running and doing legitimate work, while Process Hollowing (T1055.012) creates a brand-new process specifically in a suspended state for the purpose of hollowing it out. That difference matters operationally — hijacking has no new-process-creation event to correlate against at all, only a modification to something that was already there."
+        },
+        {
+          "term": "Suspend-modify-resume as the fingerprint",
+          "explanation": "Legitimate software essentially never suspends another process's thread, rewrites its register context via SetThreadContext, and resumes it — that's not a normal interaction pattern between unrelated processes. The specific sequence (OpenThread → SuspendThread → VirtualAllocEx/WriteProcessMemory → SetThreadContext → ResumeThread) is distinctive enough on its own to be a strong signal, independent of whatever payload the hijacked thread ends up running."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Gazer", "activity": "Performs thread hijacking to inject its orchestrator into remote process threads." },
+        { "actor": "Pikabot", "activity": "Creates suspended legitimate process instances and redirects execution via the SetContextThread API." },
+        { "actor": "Trojan.Karagany", "activity": "Injects suspended threads from its own process into new processes, resuming via ResumeThread." },
+        { "actor": "Waterbear", "activity": "Employs thread injection to insert shellcode directly into security software processes." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 10 (ProcessAccess)", "detail": "THREAD_SUSPEND_RESUME and THREAD_SET_CONTEXT access rights requested against a target thread, the mechanical fingerprint of this sequence." },
+        { "source": "EDR thread-context telemetry", "detail": "A thread's instruction pointer or context changing via SetThreadContext without a corresponding legitimate debugger attached." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Thread Suspend-Modify-Resume Sequence",
+          "description": "Flags the OpenThread/SuspendThread/SetThreadContext/ResumeThread sequence against a thread in an unrelated process.",
+          "query": "title: Suspicious Thread Context Manipulation\nid: 8b3f6a9c-5d2e-4c7f-9a1b-6f3c8a9e5b60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_access\n  product: windows\ndetection:\n  selection:\n    GrantedAccess|contains:\n      - '0x1F0FFF'\n      - '0x1FFFFF'\n    CallTrace|contains: 'SetThreadContext'\n  condition: selection\nfalsepositives:\n  - Legitimate debuggers (WinDbg, Visual Studio) manipulating thread context during authorized debugging sessions\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.003"
+        }
+      ],
+      "false_positives": [
+        "Legitimate debuggers manipulating thread context during an authorized, attended debugging session",
+        "Some application compatibility shims and instrumentation tools that legitimately modify thread context"
+      ],
+      "response_steps": [
+        "Identify which thread and process were hijacked and what the redirected execution accomplished",
+        "Pull the injected shellcode/code from the target thread's memory for analysis",
+        "Check the source process for a debugger-style capability that shouldn't be present on this host",
+        "Restart or terminate the affected process once analysis is complete, since its in-memory state is no longer trustworthy"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on the thread suspend/modify/resume behavioral sequence." }
+      ],
+      "related": [
+        { "id": "T1055.012", "name": "Process Hollowing", "relation": "The closest sibling technique, differing in whether the target process already existed or was created specifically to be hollowed." }
+      ]
+    },
+    {
+      "id": "T1055.004",
+      "name": "Asynchronous Procedure Call",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/004/",
+      "overview": "Windows lets one thread queue a function for another thread to run the next time that target thread enters an \"alertable\" wait state — a legitimate mechanism attackers repurpose by queuing a call to LoadLibrary (or a pointer to shellcode) onto a target thread's APC queue via QueueUserAPC or the lower-level NtQueueApcThread. Two well-known variants extend the idea: Early Bird injection queues the APC before the process's main thread ever reaches its real entry point, and AtomBombing routes the payload through the global atom table to reach the APC mechanism indirectly.",
+      "concepts": [
+        {
+          "term": "Why the payload only fires when the thread checks its own queue",
+          "explanation": "Unlike CreateRemoteThread, which forces immediate new execution, an APC doesn't run the moment it's queued — it waits until the target thread voluntarily calls something like SleepEx or WaitForSingleObjectEx and enters an alertable state, at which point Windows itself checks that thread's APC queue and runs whatever's there. Attackers are exploiting a legitimate, deliberate OS mechanism for deferred callback execution, not forcing anything — the timing is up to the target thread's own normal behavior."
+        },
+        {
+          "term": "Early Bird: winning the race against everything else",
+          "explanation": "Creating a process suspended and queuing the malicious APC before that process's main thread ever reaches its real entry point means the payload runs before any of the process's own normal startup code executes — including, crucially, before hooks or monitoring that some security products install only once a process has genuinely started running get a chance to observe anything at all."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Attor", "activity": "Performs injection by attaching its code into the APC queue using the NtQueueApcThread API." },
+        { "actor": "Carberp", "activity": "Queued APC routines to explorer.exe via ZwQueueApcThread." },
+        { "actor": "IcedID", "activity": "Employed ZwQueueApcThread for remote process injection." },
+        { "actor": "TURNEDUP", "activity": "Injects code into the Rundll32 process's APC queue via the Early Bird variant." },
+        { "actor": "XLoader", "activity": "Injects via the APC queue using the NtQueueApcThread API." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 10 (ProcessAccess)", "detail": "Access rights consistent with thread manipulation targeting a suspended or newly-created process's main thread." },
+        { "source": "EDR syscall telemetry", "detail": "NtQueueApcThread / QueueUserAPC calls targeting a thread in a different process, especially one still in a suspended state." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "APC Queued to Suspended Process Thread (Early Bird Pattern)",
+          "description": "Flags QueueUserAPC/NtQueueApcThread targeting a thread in a process still in CREATE_SUSPENDED state, the Early Bird injection signature.",
+          "query": "title: APC Injection into Suspended Process\nid: 6a3d8c9f-7b4e-4c2a-9d1f-3b6a8c9e4d80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_access\n  product: windows\ndetection:\n  selection:\n    CallTrace|contains:\n      - 'NtQueueApcThread'\n      - 'QueueUserAPC'\n  filter_self:\n    SourceImage|equal: TargetImage\n  condition: selection and not filter_self\nfalsepositives:\n  - Legitimate use of the APC mechanism by runtime environments and some application frameworks for deferred callback execution\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.004"
+        }
+      ],
+      "false_positives": [
+        "Legitimate .NET/runtime environments and application frameworks that use APCs for deferred callback execution as part of normal operation",
+        "Some legitimate injection-based instrumentation and profiling tools"
+      ],
+      "response_steps": [
+        "Identify the target process and thread the APC was queued to",
+        "Determine whether the process was still suspended (Early Bird pattern) or already running normally when the APC fired",
+        "Pull the queued payload from memory for analysis",
+        "Check for AtomBombing-style indirection via the global atom table if the direct APC queuing pattern doesn't fully explain the observed behavior"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on remote memory allocation combined with APC queuing and modified thread context." }
+      ],
+      "related": [
+        { "id": "T1055.001", "name": "Dynamic-link Library Injection", "relation": "APC injection is frequently used specifically to trigger the LoadLibrary call in an otherwise-classic DLL injection chain." }
+      ]
+    },
+    {
+      "id": "T1055.005",
+      "name": "Thread Local Storage",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/005/",
+      "overview": "TLS callbacks are a legitimate PE feature letting a program register functions that Windows runs automatically at thread creation and exit — and critically, the OS invokes any registered TLS callback before the program's actual entry point ever executes. Attackers manipulate a PE's TLS directory to point at malicious code, getting execution before the normal entry point runs, almost always as a timing trick layered onto another injection method like process hollowing rather than as a standalone technique.",
+      "concepts": [
+        {
+          "term": "Why running before main() matters",
+          "explanation": "A debugger set to break at a process's entry point, or monitoring logic that assumes execution begins there, sees nothing unusual because TLS callbacks run first, by design, before that entry point is ever reached. Redirecting a TLS callback pointer to malicious code exploits that ordering guarantee directly — the injected code gets a head start specifically over anything watching for \"the program has started.\""
+        },
+        {
+          "term": "Why it's a layer on hollowing, not a standalone method",
+          "explanation": "TLS callback abuse still needs a host PE image carrying a malicious TLS directory to actually run — it doesn't inject code into an arbitrary running process on its own. MITRE's own detection guidance treats it as something to watch for \"during or following process hollowing,\" which reflects the real-world pattern: this is a timing trick combined with another delivery technique, not a full injection method by itself."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Ursnif", "activity": "Employs thread local storage callbacks to inject code into target processes across multiple variants." },
+        { "actor": "CANONSTAGER", "activity": "Leverages TLS array data structures to store and later invoke resolved function addresses from custom API hashing." }
+      ],
+      "data_sources": [
+        { "source": "EDR/memory scanning", "detail": "PE header and TLS directory modifications in process memory, especially occurring during or immediately following an otherwise-suspicious process creation." },
+        { "source": "Sysmon 25 (ProcessTampering)", "detail": "Where TLS callback abuse is paired with hollowing, the same process-tampering event that catches the hollowing will often be the practical detection point." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "TLS Callback Redirection During Process Creation",
+          "description": "Flags PE TLS directory memory modification correlated with suspicious process creation, the pattern this sub-technique's own detection guidance describes.",
+          "query": "title: TLS Callback Table Modification\nid: 3e8c6a9d-4f7b-4c2a-9d1e-6b3a9c8f4d90\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_tampering\n  product: windows\ndetection:\n  selection:\n    EventID: 25\n  condition: selection\nfalsepositives:\n  - Legitimate packers/protectors that use TLS callbacks for anti-debugging purposes without malicious intent\nlevel: medium\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.005"
+        }
+      ],
+      "false_positives": [
+        "Legitimate commercial packers and software-protection products that use TLS callbacks for anti-tampering/anti-debug purposes",
+        "Some legitimate runtime initialization code that uses TLS callbacks as designed"
+      ],
+      "response_steps": [
+        "Pull the TLS directory and callback code from the affected process's memory for analysis",
+        "Check whether this occurred alongside process hollowing indicators (Sysmon 25) rather than treating it as isolated",
+        "Identify the original clean binary that was tampered with and compare against a known-good copy",
+        "Terminate and rebuild the affected process from a trusted source"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on TLS directory modification patterns associated with process hollowing." }
+      ],
+      "related": [
+        { "id": "T1055.012", "name": "Process Hollowing", "relation": "TLS callback abuse is almost always layered on top of hollowing rather than used as a standalone technique." }
+      ]
+    },
+    {
+      "id": "T1055.008",
+      "name": "Ptrace System Calls",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Linux"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/008/",
+      "overview": "ptrace is the Linux system call that lets one process observe and control another — the exact mechanism gdb and every other Linux debugger is built on. Adversaries attach to a target process via ptrace and either write arbitrary code directly into its memory with PTRACE_POKETEXT/PTRACE_POKEDATA, or set its registers with PTRACE_SETREGS to redirect execution, all using a completely standard syscall interface present on every Linux system by default.",
+      "concepts": [
+        {
+          "term": "Repurposing the debugger primitive itself",
+          "explanation": "ptrace exists specifically so a debugger can attach to a process, read and write its memory, and control its execution flow — precisely the capability an attacker wants, requiring zero new code or exploit, since it's a standard, always-present syscall interface rather than a vulnerability. This is functionally the Linux equivalent of Windows' OpenProcess + WriteProcessMemory combination, just accessed through a single unified debugging syscall instead of several separate Win32 API calls."
+        },
+        {
+          "term": "Yama's ptrace_scope as the practical lever",
+          "explanation": "Because ptrace can't simply be disabled without breaking legitimate debugging entirely, the actual control available is the Yama Linux Security Module's /proc/sys/kernel/yama/ptrace_scope sysctl, which by default on many hardened distributions restricts ptrace to only a process's own direct children. That single setting doesn't remove ptrace's legitimate functionality, but it does close off exactly the cross-process, arbitrary-target scenario this sub-technique depends on."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "PACEMAKER", "activity": "Uses PTRACE to attach to a targeted process and read its process memory, documented in analysis of Pulse Secure exploitation." }
+      ],
+      "data_sources": [
+        { "source": "auditd", "detail": "ptrace syscall invocations, particularly PTRACE_ATTACH/PTRACE_POKETEXT/PTRACE_SETREGS against a process that isn't the caller's own child." },
+        { "source": "Yama ptrace_scope enforcement logs", "detail": "Denied ptrace attempts blocked by Yama, which are themselves a signal something tried this and failed." }
+      ],
+      "detection_queries": [
+        {
+          "language": "auditd",
+          "title": "ptrace Attach to Non-Child Process",
+          "description": "Base auditd rule flagging ptrace syscall usage for correlation against process relationships.",
+          "query": "auditctl -a always,exit -F arch=b64 -S ptrace -F key=ptrace_injection"
+        },
+        {
+          "language": "Sigma",
+          "title": "ptrace Attach from Unusual Process",
+          "description": "Flags ptrace syscall usage by a process without a normal debugging purpose, correlated with the caller not being the target's parent.",
+          "query": "title: Suspicious ptrace Attach\nid: 9d3f7a2c-6e4b-4c8a-9d1f-2e6b4a8c9d90\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: linux\n  service: auditd\ndetection:\n  selection:\n    type: 'SYSCALL'\n    syscall: 'ptrace'\n  filter_debuggers:\n    exe|endswith:\n      - '/gdb'\n      - '/strace'\n      - '/ltrace'\n  condition: selection and not filter_debuggers\nfalsepositives:\n  - Legitimate debugging and tracing tools (gdb, strace, ltrace) used by developers and SREs\nlevel: medium\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.008"
+        }
+      ],
+      "false_positives": [
+        "Legitimate debugging and tracing tools (gdb, strace, ltrace) used by developers, SREs, and troubleshooting workflows",
+        "Container runtimes and sandboxing technologies that legitimately use ptrace for syscall interception (gVisor and similar)"
+      ],
+      "response_steps": [
+        "Identify the calling process and confirm it isn't a legitimate debugger session",
+        "Determine what was written to or read from the target process's memory",
+        "Check Yama's ptrace_scope setting on the host — if it's set to unrestricted, this is a real gap worth closing",
+        "Restart the affected process once its memory has been confirmed tampered with"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on ptrace-based injection behavioral sequences." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict ptrace usage via Yama's ptrace_scope to privileged users/parent-child relationships only; deploy SELinux, grsecurity, or AppArmor." }
+      ],
+      "related": [
+        { "id": "T1003.007", "name": "Proc Filesystem", "relation": "Both abuse the same broad category of Linux process-introspection capability, one via the ptrace syscall interface and the other via direct /proc file access." }
+      ]
+    },
+    {
+      "id": "T1055.009",
+      "name": "Proc Memory",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Linux"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/009/",
+      "overview": "Rather than writing new executable code into a target process (which loud, well-monitored techniques do), this method reads /proc/[pid]/maps to find code the target process already has mapped and trusts, identifies reusable instruction sequences (gadgets) within it, and chains them together into a return-oriented programming (ROP) payload — then overwrites the target's stack, often using nothing more exotic than the dd utility, to redirect execution through that chain.",
+      "concepts": [
+        {
+          "term": "Building from what's already there instead of adding anything new",
+          "explanation": "Because this technique reuses code the target process already has mapped rather than injecting anything new, there's no new executable memory region and no new code to flag as suspicious — the entire payload is assembled from legitimate instruction fragments that were already part of the trusted process. That's a meaningfully different detection problem than every technique that writes fresh shellcode into memory."
+        },
+        {
+          "term": "ASLR doesn't stop an attacker who can just look",
+          "explanation": "Address Space Layout Randomization is supposed to make gadget addresses unpredictable by randomizing where code gets loaded on each run. But /proc/[pid]/maps directly exposes the target process's actual current memory layout to anyone with sufficient permission to read it — an attacker doesn't need to predict the randomized addresses when they can simply look them up at runtime, which is precisely why this technique's defense leans on restricting who can read /proc/[pid]/maps at all, not on ASLR itself."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "KV Botnet Activity", "activity": "Final payload stage mounts and binds to the /proc/ filepath on victim systems to enable memory-resident operation while eliminating disk-based artifacts." }
+      ],
+      "data_sources": [
+        { "source": "auditd", "detail": "Reads of /proc/[pid]/maps and /proc/[pid]/mem for a process other than the caller's own, especially followed by a write to that same target." },
+        { "source": "Process activity", "detail": "Unusual use of the dd utility or similar low-level tools against a /proc/[pid]/mem path rather than a normal file." }
+      ],
+      "detection_queries": [
+        {
+          "language": "auditd",
+          "title": "Cross-Process /proc/mem Read and Write",
+          "description": "Base auditd rule watching for reads and writes to another process's /proc/[pid]/mem, the core signal for this technique.",
+          "query": "auditctl -a always,exit -F arch=b64 -S openat -F dir=/proc -F name~=/.*/mem -F key=proc_mem_injection"
+        },
+        {
+          "language": "Sigma",
+          "title": "dd Utility Targeting /proc/[pid]/mem",
+          "description": "Flags the dd utility used against a /proc/<pid>/mem path, a documented technique for overwriting target process memory without more specialized tooling.",
+          "query": "title: dd Used Against proc Memory\nid: 2e6b4a8c-9d1f-4c7a-8b3e-6f9c2a8d4e10\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: linux\ndetection:\n  selection:\n    Image|endswith: '/dd'\n    CommandLine|contains: '/proc/'\n    CommandLine|contains: '/mem'\n  condition: selection\nfalsepositives:\n  - Rare legitimate forensic or diagnostic tooling that directly manipulates /proc/[pid]/mem\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.009"
+        }
+      ],
+      "false_positives": [
+        "Rare legitimate forensic or diagnostic tooling that directly manipulates /proc/[pid]/mem for analysis purposes",
+        "Some container runtime or checkpoint/restore tooling (CRIU) that legitimately inspects process memory via /proc"
+      ],
+      "response_steps": [
+        "Identify the target process whose memory was overwritten and what the ROP chain accomplished",
+        "Restrict /proc/[pid]/mem and /proc/[pid]/maps access permissions if not already scoped tightly",
+        "Restart the affected process since its stack/execution state can no longer be trusted",
+        "Hunt for the same tooling pattern (dd against /proc paths) across other hosts"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on /proc memory enumeration and modification behavioral patterns." },
+        { "id": "M1022", "name": "Restrict File and Directory Permissions", "detail": "Limit access to /proc/[pid]/maps and /proc/[pid]/mem." }
+      ],
+      "related": [
+        { "id": "T1003.007", "name": "Proc Filesystem", "relation": "The credential-dumping use of the same /proc memory-access primitive this sub-technique uses for code injection instead." }
+      ]
+    },
+    {
+      "id": "T1055.011",
+      "name": "Extra Window Memory Injection",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/011/",
+      "overview": "Every Windows graphical process registers window classes, and during registration a developer can request up to 40 bytes of Extra Window Memory (EWM) appended to each class instance for storing window-specific data. Adversaries write shellcode elsewhere in shared process memory, store a pointer to it in a window's EWM using SetWindowLong or SetClassLong, then trigger execution by sending the window a message — all without ever calling WriteProcessMemory or CreateRemoteThread.",
+      "concepts": [
+        {
+          "term": "40 bytes is plenty when you only need a pointer",
+          "explanation": "EWM's budget sounds tiny, but a 32-bit pointer only needs 4 bytes — the EWM slot itself never holds the actual payload, just a pointer to shellcode written elsewhere in memory the target process shares access to. The small size limit that might look like a constraint on the technique is actually irrelevant to it."
+        },
+        {
+          "term": "Purpose-built to avoid the two most-watched APIs",
+          "explanation": "The redirection happens via SetWindowLong/SetClassLong (modifying a window property, not process memory directly) and execution triggers through an ordinary window message like SendNotifyMessage — meaning neither WriteProcessMemory nor CreateRemoteThread, the two API calls most heavily instrumented by EDR for this entire technique family, ever get called at all. This isn't an accidental side effect; it's specifically why the technique exists as an alternative in the first place."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Epic", "activity": "Overwrote the function pointer in the extra window memory of Explorer's Shell_TrayWnd to achieve code execution within explorer.exe." },
+        { "actor": "Power Loader", "activity": "Modified Explorer's Shell_TrayWnd EWM to redirect execution toward NTDLL using return-oriented programming chains." }
+      ],
+      "data_sources": [
+        { "source": "EDR API telemetry", "detail": "SetWindowLong/SetClassLong calls targeting a window class instance belonging to a different process, particularly Shell_TrayWnd (Explorer's taskbar window)." },
+        { "source": "Window messaging telemetry", "detail": "SendNotifyMessage or similar calls targeting a window shortly after its EWM was modified, the execution-trigger half of the pattern." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Cross-Process SetWindowLong Targeting Shell_TrayWnd",
+          "description": "Flags window-property modification against Explorer's taskbar window class from an unrelated process, the documented EWM injection pattern.",
+          "query": "title: Extra Window Memory Injection via Shell_TrayWnd\nid: 4f8b3a9c-6d2e-4c7a-9d1f-3b6a9c8e4f20\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: api_call\n  product: windows\ndetection:\n  selection:\n    ApiName:\n      - 'SetWindowLongA'\n      - 'SetWindowLongW'\n      - 'SetClassLongA'\n      - 'SetClassLongW'\n    TargetWindowClass: 'Shell_TrayWnd'\n  filter_self:\n    SourceImage|endswith: '\\explorer.exe'\n  condition: selection and not filter_self\nfalsepositives:\n  - Legitimate shell extensions and taskbar customization software that interacts with Shell_TrayWnd by design\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.011"
+        }
+      ],
+      "false_positives": [
+        "Legitimate taskbar customization software and shell extensions that legitimately interact with Shell_TrayWnd",
+        "Accessibility software that manipulates window properties as part of its intended function"
+      ],
+      "response_steps": [
+        "Identify the source process that modified the EWM and the shellcode it pointed to in shared memory",
+        "Pull the shellcode from the shared memory region for analysis",
+        "Restart explorer.exe (or whichever process's window was targeted) since its in-memory state is no longer trustworthy",
+        "Check for persistence tied to the source process, since EWM injection alone doesn't survive a reboot without a separate persistence mechanism"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on SetWindowLong/SetClassLong redirection combined with window-message-triggered execution." }
+      ],
+      "related": [
+        { "id": "T1055.015", "name": "ListPlanting", "relation": "The closest sibling technique — both use Windows messaging to avoid WriteProcessMemory/CreateRemoteThread entirely, targeting different UI control types." }
+      ]
+    },
+    {
+      "id": "T1055.012",
+      "name": "Process Hollowing",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/012/",
+      "overview": "An adversary creates a new process in a suspended state (CREATE_SUSPENDED), unmaps its own legitimate code from memory via ZwUnmapViewOfSection before it ever runs, writes malicious code in its place, then sets the thread context and resumes it. The result runs under a completely legitimate process name and on-disk file — one of the most widely used process injection techniques across both commodity malware and sophisticated APT toolkits alike.",
+      "concepts": [
+        {
+          "term": "A brand-new process, created specifically to be gutted",
+          "explanation": "The defining difference from Thread Execution Hijacking: hollowing always starts by creating an entirely new process in a suspended state, rather than reaching into one that's already running and doing real work. That new process never gets the chance to execute its real code at all — it's unmapped and replaced before its main thread is ever resumed for the first time."
+        },
+        {
+          "term": "Why the process 'lies' about what it is, and why Sysmon 25 had to exist",
+          "explanation": "After hollowing, every static indicator — the process name in Task Manager, the file path, the code-signing certificate on the file sitting on disk — still correctly identifies the legitimate binary, because the file on disk was never touched. Only what's mapped into memory changed. That gap is exactly why Microsoft built Sysmon Event 25 (ProcessTampering) as a dedicated event type: nothing else in the standard Sysmon config was watching for \"the in-memory image stopped matching the on-disk file it claims to be.\""
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "QakBot", "activity": "Uses process hollowing to execute its main payload." },
+        { "actor": "Raspberry Robin", "activity": "Executes a legitimate process, suspends it, and injects Tor client code." },
+        { "actor": "Smoke Loader", "activity": "Spawns an explorer.exe copy and replaces its code in memory." },
+        { "actor": "menuPass", "activity": "Uses hollowing in iexplore.exe to load the RedLeaves implant." },
+        { "actor": "Cobalt Strike", "activity": "Leverages process hollowing as a core execution capability." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 25 (ProcessTampering)", "detail": "Purpose-built for exactly this: detects when a process's in-memory image no longer matches its on-disk file. Not enabled by default — requires explicit Sysmon config." },
+        { "source": "Sysmon 1 (Process creation)", "detail": "Process creation with the CREATE_SUSPENDED flag, followed shortly by ZwUnmapViewOfSection and a large memory write." },
+        { "source": "EDR image-mismatch detection", "detail": "The mapped executable section in memory differing from the file's actual on-disk hash." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Process Tampering Detected (Hollowing/Herpaderping)",
+          "description": "Directly consumes Sysmon Event 25, purpose-built for this exact technique. Confirm it's enabled in your Sysmon config before relying on this rule.",
+          "query": "title: Process Tampering via Hollowing or Herpaderping\nid: 5c9e3a7d-8b4f-4c2e-9d1a-7f3b9c6e4d30\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_tampering\n  product: windows\ndetection:\n  selection:\n    EventID: 25\n  condition: selection\nfalsepositives:\n  - Legitimate packers and software-protection products may trigger this event depending on their specific technique\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.012"
+        }
+      ],
+      "false_positives": [
+        "Legitimate commercial packers and software-protection products may trigger process tampering detection depending on their specific unpacking technique",
+        "Some legitimate application virtualization/sandboxing software modifies process images in ways that can resemble hollowing"
+      ],
+      "response_steps": [
+        "Confirm Sysmon 25 (or equivalent EDR image-mismatch telemetry) is actually enabled before assuming this technique would have been caught",
+        "Identify which legitimate process was hollowed and what malicious code replaced its original image",
+        "Pull the injected code from memory for analysis, since the on-disk file is clean and won't help",
+        "Terminate the hollowed process; do not trust its continued execution even after apparent cleanup"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on suspended process creation, memory unmapping, and thread context modification." }
+      ],
+      "related": [
+        { "id": "T1055.013", "name": "Process Doppelgänging", "relation": "A closely related technique built specifically to achieve the same masking effect while avoiding the exact APIs hollowing detection watches for." }
+      ]
+    },
+    {
+      "id": "T1055.013",
+      "name": "Process Doppelgänging",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/013/",
+      "overview": "A four-phase technique built on Windows Transactional NTFS (TxF), a Vista-era feature that remains functional (though deprecated) through Windows 10: Transact (overwrite a legitimate file with malicious code, but only inside an NTFS transaction), Load (map that tainted transacted file into memory), Rollback (revert the transaction, erasing the malicious content from the actual filesystem), and Animate (create a process from the already-mapped, now-orphaned memory section and run it).",
+      "concepts": [
+        {
+          "term": "Why a live disk scan finds nothing, even during the attack",
+          "explanation": "The malicious content only ever exists inside an NTFS transaction — a private, isolated view of file changes that hasn't been committed. The moment that transaction is rolled back (which happens deliberately, as part of the attack sequence itself, not as cleanup afterward), the file on the actual filesystem reverts to its original clean state. A disk scan running at literally any point, including mid-attack, sees only the legitimate file, because the tainted version was never actually committed to disk in the way a scanner could observe."
+        },
+        {
+          "term": "A direct response to hollowing-specific detection",
+          "explanation": "Doppelgänging is deliberately built to skip NtUnmapViewOfSection, VirtualProtectEx, and SetThreadContext — precisely the APIs Process Hollowing detection keys on — using the undocumented NtCreateProcessEx instead to create a process from the tainted memory section directly. This isn't a parallel invention; it's a direct, purpose-built evasion of detections that had already become common for T1055.012, which is exactly why understanding both together matters more than either in isolation."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "SynAck", "activity": "Abuses NTFS transactions to launch and conceal malicious processes." },
+        { "actor": "Bazar", "activity": "Implements process doppelgänging for target process injection." },
+        { "actor": "Leafminer", "activity": "Deployed tools on compromised systems using this evasion method." }
+      ],
+      "data_sources": [
+        { "source": "EDR kernel callback telemetry", "detail": "NtCreateProcessEx invocations creating a process from a transacted file section — an undocumented API rarely called by legitimate software at all." },
+        { "source": "NTFS transaction activity", "detail": "TxF transaction creation and rollback in close temporal proximity to process creation, an unusual combination outside of specific backup/installer software." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Process Created from Transacted File Section",
+          "description": "Flags NtCreateProcessEx usage against a transacted (TxF) file section, the core Process Doppelgänging signature.",
+          "query": "title: Process Doppelganging via NtCreateProcessEx\nid: 6f3b9a8c-4e7d-4c2a-9d6f-8b3a9c7e4f40\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: api_call\n  product: windows\ndetection:\n  selection:\n    ApiName: 'NtCreateProcessEx'\n    SectionType: 'transacted'\n  condition: selection\nfalsepositives:\n  - Rare; TxF-based process creation via NtCreateProcessEx has very few legitimate uses in modern software\nlevel: critical\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.013"
+        }
+      ],
+      "false_positives": [
+        "Extremely rare in legitimate software — TxF-based process creation via the undocumented NtCreateProcessEx has very few known legitimate uses on modern Windows"
+      ],
+      "response_steps": [
+        "Pull the malicious code from the process's memory for analysis, since no useful artifact exists on disk",
+        "Identify the legitimate file that was transiently used as the transaction target",
+        "Treat this as a high-confidence indicator given how rare legitimate TxF process creation is — escalate immediately rather than waiting for corroboration",
+        "Terminate the affected process; there is no clean version to \"restore\" since the file itself was never actually modified"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on TxF transaction abuse combined with undocumented process creation APIs." }
+      ],
+      "related": [
+        { "id": "T1055.012", "name": "Process Hollowing", "relation": "The technique this one was specifically built to evade the detection of, while achieving a similar end result." }
+      ]
+    },
+    {
+      "id": "T1055.014",
+      "name": "VDSO Hijacking",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Linux"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/014/",
+      "overview": "The vDSO (virtual Dynamic Shared Object) is a small piece of kernel code the Linux kernel maps into every process's address space to let userspace call certain frequently-used syscalls (like gettimeofday) quickly, without the overhead of a full kernel-mode transition. Adversaries redirect calls to dynamically linked shared libraries by overwriting Global Offset Table (GOT) entries — including those used by vDSO syscall stubs — to point at a malicious shared object instead of the legitimate function.",
+      "concepts": [
+        {
+          "term": "Why the vDSO specifically is attractive",
+          "explanation": "Unlike a normal shared library that only some processes load, the vDSO is mapped into essentially every Linux process by default as a kernel-provided optimization. Hijacking something present nearly universally gives an attacker a foothold mechanism that doesn't depend on a specific application or library being present on the target at all — it's about as close to a universal Linux injection surface as exists."
+        },
+        {
+          "term": "GOT redirection: an old trick applied to a new target",
+          "explanation": "The Global Offset Table is how dynamically-linked programs resolve the real memory address of an external function at runtime, rather than hardcoding it at compile time. Overwriting a GOT entry to point at attacker-controlled code means every subsequent legitimate call to that function silently detours through the malicious code first before (optionally) continuing to the real one. GOT overwrite attacks predate this specific MITRE entry by decades — this sub-technique specifically calls out the vDSO's syscall-stub variant of that much older idea."
+        }
+      ],
+      "procedure_examples": [],
+      "data_sources": [
+        { "source": "auditd / EDR memory integrity checks", "detail": "Modification of GOT entries or vDSO code stubs in a running process's memory, detectable by comparing against the expected, unmodified vDSO mapping." },
+        { "source": "Process memory scanning", "detail": "A process's vDSO region containing code that doesn't match the kernel-provided original." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "GOT/vDSO Memory Region Modification",
+          "description": "Flags memory-integrity findings where a process's Global Offset Table or vDSO mapping no longer matches the expected kernel-provided content.",
+          "query": "title: GOT or vDSO Memory Tampering\nid: 8a4c9e6d-3f7b-4c2a-9d8e-6b3f9c7a4d50\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: memory_scan\n  product: linux\ndetection:\n  selection:\n    memory.region: 'vdso'\n    memory.integrity: 'modified'\n  condition: selection\nfalsepositives:\n  - Extremely rare; the vDSO is kernel-provided and not intended to be legitimately modified by userspace software\nlevel: critical\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.014"
+        }
+      ],
+      "false_positives": [
+        "Extremely rare — the vDSO is kernel-provided and userspace software has no legitimate reason to modify it directly"
+      ],
+      "response_steps": [
+        "Identify every process sharing the tampered vDSO mapping, since a system-wide vDSO modification could affect multiple processes",
+        "Compare the affected memory region against a known-good vDSO mapping from an unaffected host",
+        "Pull the malicious shared object being redirected to for analysis",
+        "Given how rare legitimate explanations are for this finding, treat it as high-confidence and escalate immediately"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on GOT/vDSO memory modification patterns." }
+      ],
+      "related": [
+        { "id": "T1055.009", "name": "Proc Memory", "relation": "Both abuse fine-grained Linux memory internals rather than the higher-level ptrace debugging interface." }
+      ]
+    },
+    {
+      "id": "T1055.015",
+      "name": "ListPlanting",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1055/015/",
+      "overview": "A message-passing (\"shatter\") attack against SysListView32 controls — the standard Windows list-view UI element. An adversary finds a target list-view window via FindWindow/EnumWindows, moves payload bytes into the control's own internal item-position storage incrementally using LVM_SETITEMPOSITION window messages (rather than WriteProcessMemory), then triggers execution by sending LVM_SORTITEMS, which runs the payload as the control's own sort-callback function inside the target process.",
+      "concepts": [
+        {
+          "term": "A shatter attack for the injection era",
+          "explanation": "Windows messaging was never originally designed with strict process isolation in mind — any process can send a window message to any window it can find a handle to, by design. This technique exploits exactly that: instead of writing directly into another process's memory via WriteProcessMemory, it uses entirely ordinary window messages to slowly move payload bytes into a UI control's own internal storage, byte by byte, which is invisible to detections watching specifically for cross-process memory writes."
+        },
+        {
+          "term": "Why LVM_SORTITEMS is the real giveaway",
+          "explanation": "Legitimate applications essentially never invoke a custom sort callback on a list-view control they don't own, arriving via cross-process window messaging — that's simply not a normal interaction pattern between unrelated processes. The LVM_SORTITEMS trigger message, especially originating from a process other than the one that created the window, is a far more specific and reliable signal than the incremental LVM_SETITEMPOSITION payload-delivery messages that precede it, which individually look mundane."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "InvisiMole", "activity": "Has used ListPlanting to inject code into a trusted process, per ESET research." }
+      ],
+      "data_sources": [
+        { "source": "EDR API telemetry", "detail": "FindWindow/EnumWindows/EnumChildWindows calls locating a SysListView32 control, followed by PostMessage/SendMessage activity targeting it." },
+        { "source": "Window messaging telemetry", "detail": "LVM_SORTITEMS sent to a list-view control from a process other than the one that owns/created that window." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Cross-Process LVM_SORTITEMS to SysListView32",
+          "description": "Flags the LVM_SORTITEMS trigger message sent to a list-view control from an unrelated process, the specific and reliable ListPlanting signature.",
+          "query": "title: ListPlanting via LVM_SORTITEMS\nid: 7b4c9e6a-3d8f-4c2a-9e6b-4f8a9c3d7e60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: api_call\n  product: windows\ndetection:\n  selection:\n    WindowClass: 'SysListView32'\n    Message: 'LVM_SORTITEMS'\n  filter_self:\n    SourceProcess|equal: TargetProcess\n  condition: selection and not filter_self\nfalsepositives:\n  - Legitimate accessibility or UI automation tooling that interacts with list-view controls across process boundaries\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.privilege_escalation\n  - attack.t1055.015"
+        }
+      ],
+      "false_positives": [
+        "Legitimate accessibility software or UI automation/testing frameworks that interact with list-view controls across process boundaries",
+        "Some legitimate screen-reader or assistive technology that hooks into UI controls this way"
+      ],
+      "response_steps": [
+        "Identify the source process that sent the LVM_SORTITEMS message and the target window/process",
+        "Reconstruct the payload from the sequence of LVM_SETITEMPOSITION messages if possible",
+        "Restart the affected process since its list-view control's internal state has been tampered with",
+        "Check for the same FindWindow/EnumWindows pattern being used to locate other injection targets"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Block based on the window-enumeration plus incremental message-based payload delivery pattern." }
+      ],
+      "related": [
+        { "id": "T1055.011", "name": "Extra Window Memory Injection", "relation": "The closest sibling technique — both use Windows messaging specifically to avoid WriteProcessMemory/CreateRemoteThread, targeting different UI mechanisms." }
+      ]
+    }
+  ]
+}

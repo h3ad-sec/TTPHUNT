@@ -1,0 +1,286 @@
+{
+  "id": "T1078",
+  "name": "Valid Accounts",
+  "tactic": "TA0005",
+  "tactic_name": "Defense Evasion",
+  "platforms": ["Windows", "Linux", "macOS", "ESXi", "Containers", "IaaS", "SaaS", "Identity Provider", "Office Suite", "Network Devices"],
+  "mitre_url": "https://attack.mitre.org/techniques/T1078/",
+  "overview": "Adversaries obtain and reuse legitimate credentials to gain access, and the technique spans four MITRE tactics at once — Initial Access, Persistence, Privilege Escalation, and Defense Evasion — because a valid login doesn't just get an attacker in, it also lets them stay, escalate, and blend into normal activity all with the same mechanism. This is the technique family everything T1003 and T1558 feed into: those packs are about obtaining credentials, this one is about what happens once an attacker actually uses them. The four sub-techniques below split by account tier — default, domain, local, and cloud — because each has a different blast radius and a different detection surface when compromised.",
+  "prerequisite_concepts": [
+    {
+      "term": "Why this is the highest-success-rate technique in the framework",
+      "explanation": "No exploit, no malware, no vulnerability required — just a username and password (or a token) that happens to be real. Industry testing has repeatedly found Valid Accounts succeeding in the overwhelming majority of tested environments, and a large share of real intrusions rely on legitimate credentials rather than malware or exploits at all. That's the throughline for this whole pack: it's not that defenses fail to stop an attack, it's that from the system's point of view there's no attack to stop — just a login."
+    },
+    {
+      "term": "The four account tiers and why blast radius differs",
+      "explanation": "A default account (factory-preset, often never rotated) is usually scoped to one device or appliance. A local account is scoped to one machine, but password reuse across many machines turns it into something much bigger. A domain account is scoped to the whole Active Directory domain by design. A cloud account can be scoped to an entire tenant, and if federated with on-premises AD, can bridge both worlds at once. The sub-technique split below exists because the right response to a compromise scales completely differently depending on which tier is involved."
+    },
+    {
+      "term": "Why 'valid' defeats signature-based detection entirely",
+      "explanation": "A stolen credential produces logon events that are byte-for-byte identical to a legitimate one — same protocol, same success code, same absence of any exploit artifact. There is no malware signature to catch and no anomalous process to flag. This is why every detection strategy across this pack is behavioral rather than signature-based: unusual timing, impossible geographic travel between two sign-ins, a service account suddenly used interactively, an account authenticating to far more hosts than its normal pattern. The whole discipline shifts from \"is this bad\" to \"is this normal for this specific identity.\""
+    },
+    {
+      "term": "MFA as the actual circuit-breaker, and why it isn't always one",
+      "explanation": "Nearly every mitigation across all four sub-techniques below leads back to multi-factor authentication, because a password alone stops being sufficient the moment a second factor is required — which is exactly why credential-only theft (T1003, password spraying, phishing) increasingly isn't enough on its own anymore. But MFA isn't absolute: session/refresh tokens issued after a successful MFA challenge can themselves be stolen and reused for their remaining lifetime without ever re-proving the second factor, and MFA fatigue attacks (bombarding a user with push notifications until they approve one) target the human in the loop rather than the cryptography. Both are why user training on push-notification hygiene shows up as a named mitigation here, not just technical controls."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1078.001",
+      "name": "Default Accounts",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Containers", "IaaS", "SaaS", "Identity Provider", "Office Suite", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1078/001/",
+      "overview": "Every system ships with at least one factory-preset account — Guest or Administrator on Windows, root on Linux/ESXi/AWS, a default service account in Kubernetes — and the risk exists from the moment the system is deployed, before an attacker does anything at all. Some default accounts aren't even part of the original install: ESXi automatically creates a vpxuser account the moment a host is connected to vCenter, a side effect of integration rather than initial setup, which makes it exactly the kind of account an inventory audit is likely to miss.",
+      "concepts": [
+        {
+          "term": "A vulnerability that predates the attacker",
+          "explanation": "Unlike almost every other technique in this guide, the exposure here isn't created by anything the victim organization did wrong during the intrusion — it's a decision (or a missed step) from before the attacker ever showed up: a vendor shipping a predictable default credential, and nobody rotating it before production. That timing matters operationally: finding and closing this gap is a proactive inventory exercise, not something that only becomes visible during incident response."
+        },
+        {
+          "term": "Integration-created accounts are the easy-to-miss variant",
+          "explanation": "vpxuser is the clean example: it doesn't exist until an ESXi host is connected to vCenter, at which point it's created automatically with vCenter-scoped privileges. Because it wasn't part of the initial OS install, it's exactly the kind of account a first-pass \"list default accounts\" audit misses — the audit has to account for what gets created by every downstream integration, not just what ships in the box."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Ember Bear", "activity": "Exploited default usernames and passwords in externally-exposed IP cameras for initial access." },
+        { "actor": "FIN13", "activity": "Leveraged default credentials on myWebMethods and QLogic web management interfaces." },
+        { "actor": "Magic Hound", "activity": "Activated the built-in DefaultAccount via PowerShell to access targeted Exchange servers over RDP." },
+        { "actor": "Stuxnet", "activity": "Infected WinCC machines by exploiting a hardcoded database server password." },
+        { "actor": "UNC3886", "activity": "Harvested and abused vCenter Server service accounts, including vpxuser." }
+      ],
+      "data_sources": [
+        { "source": "Security 4624 / 4672", "detail": "Interactive or remote logon by Guest or built-in Administrator outside any documented maintenance window." },
+        { "source": "SSH auth logs", "detail": "Password-based (not key-based) logins for the root account specifically, which most hardened Linux hosts should never see." },
+        { "source": "ESXi auth.log", "detail": "root or vpxuser logins, especially from a source inconsistent with the vCenter server itself." },
+        { "source": "Network device AAA logs", "detail": "Authentication using known default credential pairs (admin/admin, cisco/cisco-style patterns) on routers, firewalls, and switches." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Interactive Logon by Built-in Administrator or Guest",
+          "description": "Flags interactive or remote-interactive logons using the built-in Administrator or Guest account, both of which should be disabled or never used directly in a well-managed environment.",
+          "query": "SecurityEvent\n| where EventID == 4624\n| where LogonType in (2, 10)\n| where TargetUserName in~ (\"Administrator\", \"Guest\", \"DefaultAccount\")\n| project TimeGenerated, Computer, TargetUserName, LogonType, IpAddress\n| order by TimeGenerated desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "SSH Password Login as root",
+          "description": "Flags password-authenticated root SSH logins, which should be rare-to-nonexistent on a hardened host that relies on key-based auth.",
+          "query": "title: SSH Password Login as root\nid: 3f8a6c2e-9b4d-4e1a-8c7f-2d6b9a4e3c50\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: linux\n  service: auth\ndetection:\n  selection:\n    - 'Accepted password for root'\n  condition: selection\nfalsepositives:\n  - Break-glass emergency access on hosts that don't yet have key-based auth fully enforced\nlevel: high\ntags:\n  - attack.defense_evasion\n  - attack.persistence\n  - attack.t1078.001"
+        }
+      ],
+      "false_positives": [
+        "Documented maintenance-window use of a default account by IT staff, particularly during initial provisioning before individual accounts are set up",
+        "vCenter's own vpxuser performing normal SSO/management operations against ESXi hosts it legitimately manages"
+      ],
+      "response_steps": [
+        "Disable or rotate the default account's credentials immediately — don't just monitor it, since there's rarely a legitimate reason for continued default-account use",
+        "Review exactly what the account accessed during the suspected compromise window",
+        "Audit the environment for other default accounts that have never been touched since install, on this system and elsewhere",
+        "For integration-created accounts (vpxuser-style), verify the parent integration itself (vCenter, in that example) wasn't the actual point of compromise"
+      ],
+      "mitigations": [
+        { "id": "M1032", "name": "Multi-factor Authentication", "detail": "Apply MFA to default accounts so a compromised default credential alone isn't sufficient." },
+        { "id": "M1027", "name": "Password Policies", "detail": "Change default username/password combinations immediately after installation, before production deployment." }
+      ],
+      "related": [
+        { "id": "T1021.002", "name": "SMB/Windows Admin Shares", "relation": "A common immediate next step once default local credentials are confirmed valid — connecting to admin shares with them." }
+      ]
+    },
+    {
+      "id": "T1078.002",
+      "name": "Domain Accounts",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1078/002/",
+      "overview": "Domain accounts — user, administrator, and service accounts managed through Active Directory — are compromised primarily via OS credential dumping or password reuse, and once obtained they work across every domain-joined host that trusts the same directory. That single-compromise-many-doors property is exactly why domain account abuse is the connective tissue between an initial foothold and full lateral movement across an environment.",
+      "concepts": [
+        {
+          "term": "One compromise, many doors",
+          "explanation": "A local account's usefulness ends at the machine it's defined on. A domain account authenticates against the same Active Directory trust from any domain-joined host, which means one set of stolen domain credentials can potentially reach every system in the environment, not just the one it was harvested from — the entire reason domain credential theft (T1003.001, T1003.003, T1003.006) is worth the effort in the first place."
+        },
+        {
+          "term": "Domain service accounts as the quiet, high-privilege blind spot",
+          "explanation": "Service accounts aren't meant for interactive human logon, so they typically never face an MFA challenge, get created once and forgotten, and are frequently over-privileged because nobody wants to be the one who breaks a production service by trimming its rights. That combination — high privilege, no MFA, rarely audited — is exactly why Kerberoasting (T1558.003) specifically targets these accounts: they're the domain-account subset most likely to have a weak password and the most to gain from cracking it."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Wizard Spider", "activity": "Used administrative accounts including Domain Admin for lateral movement." },
+        { "actor": "Magic Hound", "activity": "Used domain administrator accounts after dumping LSASS memory." },
+        { "actor": "Sandworm Team", "activity": "Accessed administrative domain accounts using stolen credentials." },
+        { "actor": "APT29 (SolarWinds Compromise)", "activity": "Used a domain administrator account to facilitate lateral network movement." },
+        { "actor": "Volt Typhoon", "activity": "Authenticated to compromised network devices using domain accounts." }
+      ],
+      "data_sources": [
+        { "source": "Security 4624", "detail": "The same domain account authenticating to an unusually large number of distinct hosts in a short window — the core lateral-movement signature." },
+        { "source": "Logon timing/geolocation", "detail": "Off-hours logons, or two logons for the same account from geographically implausible locations within a short window." },
+        { "source": "sssd/winbind logs (Linux)", "detail": "Domain account logons on Linux hosts joined to AD, outside that account's typical access pattern." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Domain Account Authenticating to Many Distinct Hosts",
+          "description": "Flags a single account logging onto an unusually high number of distinct hosts in a short window — the lateral-movement-via-valid-account signature.",
+          "query": "SecurityEvent\n| where EventID == 4624\n| where LogonType in (3, 10)\n| summarize DistinctHosts = dcount(Computer), Hosts = make_set(Computer) by TargetUserName, bin(TimeGenerated, 30m)\n| where DistinctHosts >= 6\n| order by DistinctHosts desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "Domain Account Lateral Movement Fan-Out",
+          "description": "Vendor-agnostic version of the many-hosts-one-account pattern.",
+          "query": "title: Domain Account Authenticating to Many Distinct Hosts\nid: 6b3e9c4a-8f2d-4c7e-9a1b-5d3f8c6e2a90\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: windows\n  service: security\ndetection:\n  selection:\n    EventID: 4624\n    LogonType:\n      - 3\n      - 10\n  condition: selection | count(Computer) by TargetUserName > 5\nfalsepositives:\n  - IT staff performing legitimate multi-host maintenance in a short window\n  - A domain service account running a scheduled task across many hosts (patch management, monitoring agents)\nlevel: medium\ntags:\n  - attack.defense_evasion\n  - attack.lateral_movement\n  - attack.t1078.002"
+        }
+      ],
+      "false_positives": [
+        "IT staff performing legitimate multi-host maintenance or deployment work in a short window",
+        "A domain service account running a scheduled task (patch management, monitoring, backup agents) across many hosts as its normal function"
+      ],
+      "response_steps": [
+        "Map every host the account authenticated to during the suspected window — that's the actual scope of the incident, not just the original foothold",
+        "Reset the account's password and, if it's a privileged account, treat this as a potential domain-wide exposure",
+        "Check for follow-on DCSync or Golden/Silver Ticket activity if the account had domain admin rights",
+        "Review whether an MFA gap (legacy protocol, exempted account) is what allowed the credential to be used without a second factor"
+      ],
+      "mitigations": [
+        { "id": "M1032", "name": "Multi-factor Authentication", "detail": "Reduces the risk of a stolen domain credential being sufficient on its own." },
+        { "id": "M1027", "name": "Password Policies", "detail": "Enforce complex, unique, regularly rotated passwords." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Audit permission levels; avoid placing user/admin accounts in local administrator groups across systems." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Regularly review domain accounts; remove or disable inactive ones." }
+      ],
+      "related": [
+        { "id": "T1003.006", "name": "DCSync", "relation": "The usual escalation once a domain admin account is already compromised — pulling every other credential in the domain." },
+        { "id": "T1558.003", "name": "Kerberoasting", "relation": "The primary path to compromising a domain service account specifically, rather than a human one." }
+      ]
+    },
+    {
+      "id": "T1078.003",
+      "name": "Local Accounts",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices", "Containers"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1078/003/",
+      "overview": "Local accounts are configured per machine for standard users, remote support, services, and administration. They're scoped to a single system by design, but two things turn that narrow scope into something much bigger: password reuse across machines (one host's local hash unlocks every host that shares the same password), and dormant accounts belonging to people who've left the organization but whose accounts were never disabled.",
+      "concepts": [
+        {
+          "term": "Password reuse is what actually breaks the scoping",
+          "explanation": "A local account is only supposed to work on the machine it's defined on. Before centralized local-admin-password management (LAPS) became standard practice, it was extremely common for IT to set the exact same local administrator password across an entire fleet during imaging — meaning one host's SAM dump (T1003.002) doesn't just compromise that host, it compromises every host sharing that password, which is functionally identical to a domain-wide credential despite never touching Active Directory at all."
+        },
+        {
+          "term": "Dormant accounts as a stealth channel",
+          "explanation": "APT29 has specifically targeted accounts belonging to former employees whose accounts remain enabled on the system — nobody is watching for logons on an identity that isn't supposed to exist anymore, which is exactly the point. A dormant account isn't a technical vulnerability; it's a monitoring blind spot created by an incomplete offboarding process, and it's one of the few sub-techniques in this pack where the fix (disable unused accounts) is entirely process, not technology."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "APT29", "activity": "Targets dormant or inactive user accounts belonging to individuals no longer at the organization for access and persistence." },
+        { "actor": "Kimsuky", "activity": "Deployed the GREASE tool to add Windows admin accounts specifically to enable RDP persistence." },
+        { "actor": "NotPetya", "activity": "Used valid local credentials with PsExec and wmic to propagate across systems as a worm." },
+        { "actor": "FIN7", "activity": "Exploited compromised credentials to operate as SYSTEM on Exchange servers." },
+        { "actor": "Turla", "activity": "Exploited local accounts sharing identical passwords across victim networks." }
+      ],
+      "data_sources": [
+        { "source": "Security 4624 / 4672", "detail": "A local account authenticating from a source or at a time inconsistent with normal use for that specific account." },
+        { "source": "Same-account, many-hosts pattern", "detail": "One local account name successfully authenticating across many distinct hosts in a short window — the local-password-reuse signature, functionally identical in shape to the domain-account lateral-movement pattern but involving no domain account at all." },
+        { "source": "LAPS audit logs (if deployed)", "detail": "Absence of LAPS-managed rotation on a host is itself a risk indicator worth tracking, not just a data source for detecting abuse after the fact." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Local Account Authenticating Across Many Distinct Hosts",
+          "description": "Flags a local (non-domain) account name succeeding at authentication on an unusually high number of distinct hosts — the password-reuse-without-LAPS signature.",
+          "query": "title: Local Account Password Reuse Across Hosts\nid: 8c4d9b2e-6f3a-4e7c-9d1b-3f6a8c2e9d40\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: windows\n  service: security\ndetection:\n  selection:\n    EventID: 4624\n    LogonType:\n      - 3\n      - 10\n  filter_domain:\n    TargetDomainName: 'CORP'\n  condition: selection and not filter_domain | count(Computer) by TargetUserName > 5\nfalsepositives:\n  - Legitimate remote-support tooling that authenticates with a standard local support account by design, across many hosts\nlevel: medium\ntags:\n  - attack.defense_evasion\n  - attack.persistence\n  - attack.t1078.003"
+        }
+      ],
+      "false_positives": [
+        "Legitimate remote-support or helpdesk tooling that authenticates with a standard local support account across many hosts by design",
+        "Break-glass local admin usage during an outage when domain authentication is unavailable"
+      ],
+      "response_steps": [
+        "Determine whether local admin password reuse is the actual root cause — if so, the incident scope is every host sharing that password, not just the one first seen",
+        "Deploy or verify LAPS (or equivalent) is actually enforced across the fleet, not just configured",
+        "Disable dormant accounts belonging to former employees or decommissioned service integrations",
+        "Rotate the specific compromised local account everywhere it's reused, not just on the originally affected host"
+      ],
+      "mitigations": [
+        { "id": "M1032", "name": "Multi-factor Authentication", "detail": "Deploy MFA on local accounts via mobile authenticators or hardware tokens where supported." },
+        { "id": "M1027", "name": "Password Policies", "detail": "Mandate complex, unique passwords for local administrator accounts across all networked systems." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Implement LAPS to prevent local admin credential reuse across the domain; audit local account permissions regularly." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Remove inactive or unused accounts to reduce the attack surface." }
+      ],
+      "related": [
+        { "id": "T1003.002", "name": "Security Account Manager", "relation": "The usual source of the local hash whose reuse across hosts this sub-technique depends on." },
+        { "id": "T1021.002", "name": "SMB/Windows Admin Shares", "relation": "The common next step once local admin credential reuse across a fleet is confirmed." }
+      ]
+    },
+    {
+      "id": "T1078.004",
+      "name": "Cloud Accounts",
+      "tactic": "TA0005",
+      "tactic_name": "Defense Evasion",
+      "platforms": ["IaaS", "Identity Provider", "SaaS", "Office Suite"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1078/004/",
+      "overview": "Cloud accounts exist purely in a cloud provider or SaaS application, or as a hybrid identity federated/synced with on-premises Active Directory. Compromise happens through brute force, phishing, leaked keys, or token theft, and once an attacker holds one, they can create long-lasting credentials, bypass MFA by stealing an already-authenticated session token, assume elevated permissions through misconfigured roles, and — if the account is federated — pivot between cloud and on-premises infrastructure using the same identity.",
+      "concepts": [
+        {
+          "term": "Federation makes this a bridge, not just a cloud-side problem",
+          "explanation": "Azure AD Connect / Entra Connect continuously syncs identities between on-premises Active Directory and a cloud tenant. A compromised synced account — or worse, the sync service account itself — can be used to pivot in both directions, which is exactly why Storm-0501 specifically targeted Entra Connect access rather than treating it as just another cloud account: it's the one identity that legitimately crosses the boundary security teams usually treat as two separate trust zones."
+        },
+        {
+          "term": "Token theft is the cloud-native equivalent of Pass-the-Ticket",
+          "explanation": "Modern cloud authentication issues a long-lived session or refresh token once MFA succeeds, so the app doesn't re-prompt for every action. Stealing that token — from a compromised device, a malicious OAuth app grant, or an adversary-in-the-middle phishing kit — lets an attacker act as the user for the token's remaining lifetime without ever facing the MFA challenge again. It's functionally identical to stealing a Kerberos ticket instead of a password: the proof-of-authentication itself, not the credential that produced it, becomes the thing worth stealing."
+        },
+        {
+          "term": "Service principals: the non-human blind spot, cloud edition",
+          "explanation": "Service principals and managed identities are the cloud analogue of domain service accounts — they hold powerful API permissions, can't respond to an MFA prompt because there's no human behind them, and are easy to create without drawing attention. APT29 didn't need to steal an existing one during the SolarWinds compromise; using a compromised O365 admin account, they simply created a new Service Principal with the access they wanted, which is a persistence mechanism as much as an access one."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Scattered Spider", "activity": "Leveraged compromised Microsoft Entra ID accounts to pivot within victim environments." },
+        { "actor": "Storm-0501", "activity": "Leveraged compromised accounts to access Microsoft Entra Connect and abused Global Administrator accounts lacking MFA." },
+        { "actor": "APT29 (SolarWinds Compromise)", "activity": "Used a compromised O365 administrator account to create a new Service Principal." },
+        { "actor": "ShinyHunters", "activity": "Utilized valid cloud accounts for initial access, including AWS credentials obtained from public repositories." },
+        { "actor": "LAPSUS$", "activity": "Employed compromised credentials to access cloud assets within target organizations." }
+      ],
+      "data_sources": [
+        { "source": "Azure AD / Entra sign-in logs", "detail": "Impossible-travel sign-ins (two locations too far apart for the time between them) and legacy authentication protocol usage that bypasses modern MFA enforcement." },
+        { "source": "M365 Unified Audit Log", "detail": "New Service Principal / app registration creation, especially by an account not normally responsible for that action." },
+        { "source": "AWS CloudTrail / cloud IAM logs", "detail": "API calls or IAM policy changes outside an identity's normal scope of activity, including from a service account suddenly performing interactive-style actions." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Impossible Travel Between Two Sign-Ins for the Same Account",
+          "description": "Flags two successful sign-ins for the same account from geographically implausible locations given the time between them.",
+          "query": "SigninLogs\n| where ResultType == 0\n| project TimeGenerated, UserPrincipalName, IPAddress, Location=tostring(LocationDetails.city)\n| sort by UserPrincipalName, TimeGenerated asc\n| serialize\n| extend PrevTime = prev(TimeGenerated), PrevLocation = prev(Location), PrevUser = prev(UserPrincipalName)\n| where UserPrincipalName == PrevUser and Location != PrevLocation\n| extend GapMinutes = datetime_diff('minute', TimeGenerated, PrevTime)\n| where GapMinutes < 60\n| project UserPrincipalName, TimeGenerated, Location, PrevLocation, GapMinutes"
+        },
+        {
+          "language": "Sigma",
+          "title": "New Service Principal Created by Non-Standard Actor",
+          "description": "Flags Azure AD service principal / app registration creation, a common cloud persistence pattern.",
+          "query": "title: New Azure AD Service Principal Created\nid: 4e9c7a3d-6b8f-4c2e-9a1d-7f3b6c9e4a20\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: azure\n  service: azuread\ndetection:\n  selection:\n    OperationName: 'Add service principal'\n  condition: selection\nfalsepositives:\n  - Legitimate application onboarding and DevOps automation creating service principals as part of normal deployment pipelines\nlevel: medium\ntags:\n  - attack.defense_evasion\n  - attack.persistence\n  - attack.t1078.004"
+        }
+      ],
+      "false_positives": [
+        "Legitimate VPN or corporate proxy exit-node changes producing apparent (but false) geo-travel anomalies",
+        "Application onboarding and DevOps automation legitimately creating new service principals as part of a deployment pipeline",
+        "Break-glass emergency access accounts intentionally exempted from conditional access/MFA policies"
+      ],
+      "response_steps": [
+        "Revoke active sessions and tokens for the account immediately — a password reset alone does not invalidate an already-issued session token",
+        "Review IAM/role and conditional-access policy changes made during the suspected compromise window",
+        "If the account is federated, check Entra Connect/AD Connect configuration for tampering and treat this as a potential bridge into on-premises infrastructure too",
+        "Audit for newly created service principals, app registrations, or long-lived access keys created during the window"
+      ],
+      "mitigations": [
+        { "id": "M1036", "name": "Account Use Policies", "detail": "Implement conditional access policies blocking logins from non-compliant devices or outside defined IP ranges." },
+        { "id": "M1015", "name": "Active Directory Configuration", "detail": "Disable legacy authentication protocols that lack MFA support." },
+        { "id": "M1032", "name": "Multi-Factor Authentication", "detail": "Enforce MFA for cloud accounts, especially privileged ones, with auditing." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Routinely review privileged role assignments; implement just-in-time temporary access rather than permanent role grants." }
+      ],
+      "related": [
+        { "id": "T1003.005", "name": "Cached Domain Credentials", "relation": "In hybrid-identity environments, on-prem credential theft and cloud account compromise are two views of the same federated identity." },
+        { "id": "T1059.009", "name": "Cloud API", "relation": "The execution surface these stolen cloud credentials are actually used against once obtained." }
+      ]
+    }
+  ]
+}
