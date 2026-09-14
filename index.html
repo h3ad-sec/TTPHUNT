@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TTPHUNT: ATT&amp;CK Hunting Guides</title>
+  <meta name="description" content="In-depth, practical MITRE ATT&amp;CK hunting guides: prerequisite concepts, real procedure examples, data sources, detection queries, false-positive guidance, and response steps per technique. Starting with T1003 OS Credential Dumping." />
+  <link rel="canonical" href="https://h3ad-sec.github.io/TTPHUNT/" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="H3AD-SEC" />
+  <meta property="og:url" content="https://h3ad-sec.github.io/TTPHUNT/" />
+  <meta property="og:title" content="TTPHUNT: ATT&amp;CK Hunting Guides" />
+  <meta property="og:description" content="In-depth, practical MITRE ATT&amp;CK hunting guides: prerequisite concepts, real procedure examples, data sources, detection queries, false-positive guidance, and response steps per technique." />
+  <meta property="og:image" content="https://raw.githubusercontent.com/h3ad-sec/h3ad-sec.github.io/main/logo-dark.png" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="TTPHUNT: ATT&amp;CK Hunting Guides" />
+  <meta name="twitter:description" content="In-depth, practical MITRE ATT&amp;CK hunting guides: prerequisite concepts, real procedure examples, data sources, detection queries, false-positive guidance, and response steps per technique." />
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/h3ad-sec/h3ad-sec.github.io/main/logo-dark.png" />
+
+  <meta name="theme-color" content="#080c14" />
+  <link rel="icon" href="https://h3ad-sec.github.io/fevicon.png?v=2026" type="image/png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700&family=Share+Tech+Mono&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "TTPHUNT",
+    "description": "In-depth, practical MITRE ATT&CK hunting guides: prerequisite concepts, real procedure examples, data sources, detection queries, false-positive guidance, and response steps per technique.",
+    "url": "https://h3ad-sec.github.io/TTPHUNT/",
+    "applicationCategory": "SecurityApplication",
+    "operatingSystem": "Any",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "publisher": { "@type": "Organization", "name": "H3AD-SEC", "url": "https://h3ad-sec.github.io" }
+  }
+  </script>
+<style>
+:root{
+  --bg:#080c14;--panel:#0d1117;--panel-alt:#111827;--surface:#18253a;--surface-highlight:#1e293b;
+  --text:#e6edf3;--text-dim:#96b0cc;--muted:#8b949e;--dim:#7c8aa5;--muted-dim:#3a5470;
+  --accent:#00d4ff;--primary:#00d4ff;--accent2:#58a6ff;
+  --border:#1e2d3d;--border-strong:#24384c;--border-soft:#16212e;--border-dim:#16212e;
+  --status-live:#00d4ff;--status-partial:#f59e0b;--status-soon:#2d3748;
+  --nav-h:48px;
+  --mono:'Share Tech Mono',monospace;--ui:'IBM Plex Sans',sans-serif;--font-cond:'Share Tech Mono',monospace;--fs-xs:11px;
+  --radius-lg:10px;--shadow-sm:0 1px 2px rgba(0,0,0,.35);--ease:cubic-bezier(.2,.7,.3,1);
+}
+body.light{
+  --bg:#f8fafc;--panel:#ffffff;--panel-alt:#f1f5f9;--surface:#e7ecf3;--surface-highlight:#dbe4f0;
+  --text:#0d1117;--text-dim:#33445c;--muted:#5c6b8a;--dim:#5f7189;--muted-dim:#5c7a9a;
+  --accent:#0284c7;--primary:#0284c7;--accent2:#2563a8;
+  --border:#e2e8f0;--border-strong:#c8d4e4;--border-soft:#edf1f6;--border-dim:#c8d8ec;
+  --status-live:#0284c7;--status-partial:#d97706;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:3px;}
+body{background:var(--bg);color:var(--text);font-family:'Exo 2',sans-serif;font-size:14px;line-height:1.6;
+  min-height:100vh;transition:background .25s,color .25s;overflow-x:hidden;}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse 80% 45% at 50% 0%,rgba(0,212,255,.055) 0%,transparent 100%),
+             radial-gradient(ellipse 50% 35% at 5% 100%,rgba(0,212,255,.04) 0%,transparent 100%);}
+body.light::before{background:radial-gradient(ellipse 80% 45% at 50% 0%,rgba(2,132,199,.05) 0%,transparent 100%),
+             radial-gradient(ellipse 50% 35% at 5% 100%,rgba(37,99,235,.03) 0%,transparent 100%);}
+a{color:var(--accent);text-decoration:none;}
+a:hover{opacity:.8;}
+* { scrollbar-width:thin; scrollbar-color:var(--border-strong) transparent; }
+::-webkit-scrollbar{width:9px;height:9px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:20px;border:2px solid transparent;background-clip:content-box;}
+
+/* ── NAV ── */
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;background:var(--panel);border-bottom:1px solid var(--border);
+  height:var(--nav-h);display:flex;align-items:center;padding:0 1.25rem;transition:background .3s,border-color .3s;}
+.nav-brand{display:flex;align-items:center;flex-shrink:0;margin-right:1rem;}
+.nav-brand img{height:22px;width:auto;vertical-align:middle;}
+.xv-nav-pill{display:flex;flex-direction:column;align-items:flex-start;gap:1px;margin-left:0;padding-left:10px;
+  border-left:1px solid var(--border);white-space:nowrap;flex-shrink:0;text-decoration:none;}
+.xv-pill-name{font-family:'Exo 2',sans-serif;font-weight:700;font-size:13px;letter-spacing:3px;line-height:1;}
+.xv-pill-accent{color:var(--accent);}
+.xv-pill-text{color:var(--text);}
+.xv-pill-tagline{font-family:var(--mono);font-size:8px;color:var(--muted);letter-spacing:1.5px;}
+.nav-links{display:none!important;}
+.nav-links a{font-family:'Exo 2',sans-serif;font-weight:500;font-size:var(--fs-xs);color:var(--muted);text-decoration:none;padding:5px 8px;
+  border-radius:4px;border:1px solid transparent;white-space:nowrap;transition:all .15s;}
+.nav-links a:hover{color:var(--accent);border-color:var(--border);background:rgba(0,212,255,.04);}
+.nav-links a.nav-current{color:var(--accent);border:1px solid var(--border);}
+.nav-divider{width:1px;height:18px;background:var(--border);margin:0 4px;flex-shrink:0;}
+.nav-right{margin-left:auto;flex-shrink:0;padding-left:1rem;}
+.theme-toggle{cursor:pointer;}
+.toggle-track{width:44px;height:22px;background:var(--border);border-radius:50px;position:relative;}
+.toggle-thumb{width:16px;height:16px;background:var(--accent);border-radius:50%;position:absolute;top:3px;left:3px;
+  transition:transform .3s;box-shadow:0 0 6px var(--accent);}
+body.light .toggle-thumb{transform:translateX(22px);}
+.hamburger{display:flex!important;flex-direction:column;justify-content:center;gap:4px;cursor:pointer;padding:6px;margin-right:8px;flex-shrink:0;}
+.hamburger span{display:block;width:20px;height:2px;background:var(--muted);border-radius:2px;}
+.nav-item{position:relative;display:flex;align-items:center;}
+.nav-dropdown{display:none;position:absolute;top:100%;left:0;min-width:140px;padding-top:6px;z-index:200;}
+.nav-dropdown-inner{background:var(--panel);border:1px solid var(--border);border-radius:4px;overflow:hidden;}
+.nav-item:hover .nav-dropdown{display:block;}
+.nav-links .nav-dropdown a{display:block;padding:7px 12px;font-family:var(--ui);font-size:var(--fs-xs);color:var(--muted);
+  border:none;border-left:2px solid transparent;border-radius:0;transition:.15s;}
+.nav-links .nav-dropdown a:hover,.nav-links .nav-dropdown a.nav-current{color:var(--accent);border-left-color:var(--accent);background:rgba(0,212,255,.04);}
+.nav-drawer{display:none;position:fixed;top:var(--nav-h);left:0;right:0;background:var(--panel);border-bottom:1px solid var(--border);
+  z-index:99;padding:.75rem 1.25rem 1rem;flex-direction:column;gap:2px;max-height:calc(100vh - var(--nav-h));overflow-y:auto;}
+.nav-drawer.open{display:flex;}
+.nav-drawer a{font-family:var(--ui);font-size:13px;color:var(--text-dim);text-decoration:none;padding:8px 10px;
+  border-radius:4px;border-left:2px solid transparent;transition:.15s;}
+.nav-drawer a:hover{color:var(--accent);border-left-color:var(--accent);background:rgba(0,212,255,.04);}
+.nav-drawer a.nav-current{color:var(--accent);}
+.drawer-sub{padding-left:1.8rem !important;font-size:11px !important;opacity:.8;}
+@media(max-width:380px){.xv-pill-tagline{display:none;}.nav-brand{margin-right:.5rem;}.nav{padding:0 .75rem;}.nav-right{padding-left:.5rem;}}
+
+/* ── Footer ── */
+.tracer-footer{flex-shrink:0;border-top:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;
+  justify-content:space-between;font-family:var(--mono);font-size:11px;flex-wrap:wrap;gap:10px;background:var(--panel);}
+.footer-left{color:var(--muted);}
+.footer-right{color:var(--muted);text-transform:uppercase;opacity:.85;}
+.footer-credit-row{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;}
+.footer-credit-pill{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:6px;padding:4px 12px;border:1px solid var(--border);
+  border-radius:20px;font-family:var(--mono);font-size:10px;text-decoration:none;transition:.15s;}
+.footer-credit-pill:hover{border-color:var(--accent);}
+.footer-credit-pill .credit-tool{font-weight:700;letter-spacing:2px;}
+.footer-credit-pill .credit-by{color:var(--muted);}
+.footer-credit-pill .credit-name{color:var(--accent);font-weight:700;letter-spacing:.5px;}
+@media(max-width:860px){.tracer-footer{flex-direction:column;justify-content:center;text-align:center;gap:.6rem;}.footer-credit-row{justify-content:center;}}
+body.light .footer-left,body.light .footer-right,body.light .footer-credit-pill .credit-by{color:#2E343B;}
+body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
+
+/* ── App shell: sidebar tree + detail panel ── */
+.tt-app{position:relative;z-index:1;padding-top:var(--nav-h);min-height:100dvh;display:flex;flex-direction:column;font-family:var(--ui);}
+.tt-body{flex:1;display:flex;min-height:0;height:calc(100dvh - var(--nav-h));}
+.tt-sidebar{width:360px;max-width:100%;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;
+  background:var(--panel-alt);min-height:0;transition:transform .25s var(--ease);}
+.tt-sidebar-backdrop{display:none;}
+.tt-search-box{padding:14px;border-bottom:1px solid var(--border);flex-shrink:0;}
+.tt-search-box .tt-search-wrap{position:relative;}
+.tt-search-box input{width:100%;height:38px;padding:0 14px 0 36px;background:var(--bg);border:1px solid var(--border);
+  border-radius:7px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;transition:.14s;}
+.tt-search-box input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,212,255,.12);}
+.tt-search-box input::placeholder{color:var(--dim);}
+.tt-search-box .glyph{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--accent);pointer-events:none;}
+.tt-search-box .glyph svg{width:14px;height:14px;}
+.tt-sidebar-stats{padding:0 14px 12px;font-family:var(--mono);font-size:10.5px;color:var(--dim);flex-shrink:0;}
+.tt-tree{flex:1;overflow-y:auto;padding:6px 8px 16px;min-height:0;}
+.tt-tactic-group{margin-bottom:4px;}
+.tt-tactic-head{display:flex;align-items:center;gap:6px;padding:8px 8px;cursor:pointer;border-radius:5px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);user-select:none;}
+.tt-tactic-head:hover{color:var(--text-dim);background:rgba(0,212,255,.04);}
+.tt-tactic-caret{width:10px;height:10px;flex-shrink:0;transition:transform .18s;color:var(--muted-dim);}
+.tt-tactic-group.collapsed .tt-tactic-caret{transform:rotate(-90deg);}
+.tt-tactic-group.collapsed .tt-technique-list{display:none;}
+.tt-technique-list{padding-left:4px;}
+.tt-technique{margin:2px 0;}
+.tt-technique-head{display:flex;align-items:center;gap:7px;padding:8px 8px;border-radius:5px;cursor:pointer;transition:.12s;}
+.tt-technique-head:hover{background:var(--surface);}
+.tt-technique-head.active{background:rgba(0,212,255,.09);}
+.tt-technique-caret{width:9px;height:9px;flex-shrink:0;color:var(--muted-dim);transition:transform .18s;}
+.tt-technique.collapsed .tt-technique-caret{transform:rotate(-90deg);}
+.tt-technique.collapsed .tt-sub-list{display:none;}
+.tt-technique-id{font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700;flex-shrink:0;}
+.tt-technique-name{font-size:12.5px;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tt-technique-count{font-family:var(--mono);font-size:9.5px;color:var(--dim);background:var(--surface);
+  padding:1px 6px;border-radius:10px;flex-shrink:0;}
+.tt-sub-list{padding-left:20px;border-left:1px solid var(--border-soft);margin-left:14px;}
+.tt-sub-item{display:flex;align-items:baseline;gap:7px;padding:6px 8px;border-radius:5px;cursor:pointer;transition:.12s;
+  border-left:2px solid transparent;}
+.tt-sub-item:hover{background:var(--surface);color:var(--text);}
+.tt-sub-item.active{background:rgba(0,212,255,.1);border-left-color:var(--accent);}
+.tt-sub-item.active .tt-sub-id{color:var(--accent);}
+.tt-sub-id{font-family:var(--mono);font-size:10.5px;color:var(--dim);flex-shrink:0;}
+.tt-sub-name{font-size:12px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tt-sub-item.active .tt-sub-name{color:var(--text);}
+.tt-future-note{padding:10px 12px;margin-top:8px;font-family:var(--mono);font-size:10px;color:var(--muted-dim);
+  border:1px dashed var(--border);border-radius:6px;line-height:1.5;}
+
+.tt-sidebar-toggle{display:none;}
+
+/* ── Detail panel ── */
+.tt-detail{flex:1;overflow-y:auto;min-height:0;min-width:0;}
+.tt-detail-inner{max-width:900px;margin:0 auto;padding:32px 36px 80px;}
+.tt-empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  color:var(--dim);gap:10px;padding:40px;}
+.tt-empty svg{width:40px;height:40px;color:var(--muted-dim);}
+.tt-empty h2{font-size:15px;color:var(--text-dim);font-weight:600;}
+.tt-empty p{font-size:12.5px;max-width:360px;}
+
+.tt-crumb{font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:14px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+.tt-crumb a{color:var(--dim);}
+.tt-crumb a:hover{color:var(--accent);}
+.tt-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:6px;}
+.tt-detail-id{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:700;letter-spacing:1px;}
+.tt-detail-title{font-size:24px;font-weight:700;color:var(--text);margin:2px 0 10px;line-height:1.3;}
+.tt-badge-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;}
+.tt-badge{font-family:var(--mono);font-size:10px;letter-spacing:.5px;padding:3px 9px;border-radius:20px;
+  border:1px solid var(--border);color:var(--text-dim);background:var(--surface);}
+.tt-badge.tactic{color:var(--accent);border-color:rgba(0,212,255,.35);background:rgba(0,212,255,.07);}
+.tt-badge.plat{color:var(--accent2);}
+.tt-mitre-link{font-family:var(--mono);font-size:10.5px;color:var(--dim);display:inline-flex;align-items:center;gap:4px;}
+.tt-mitre-link:hover{color:var(--accent);}
+
+.tt-section{margin-top:30px;}
+.tt-section-title{font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--accent2);
+  margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+.tt-section-title::after{content:'';flex:1;height:1px;background:var(--border);}
+.tt-prose{font-size:13.5px;color:var(--text-dim);line-height:1.75;}
+
+.tt-concept-grid{display:flex;flex-direction:column;gap:10px;}
+.tt-concept-card{border:1px solid var(--border);border-radius:8px;padding:14px 16px;background:var(--panel-alt);}
+.tt-concept-term{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);margin-bottom:5px;}
+.tt-concept-exp{font-size:12.5px;color:var(--text-dim);line-height:1.65;}
+
+.tt-sub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;}
+.tt-sub-tile{border:1px solid var(--border);border-radius:8px;padding:13px 14px;cursor:pointer;transition:.15s;background:var(--panel-alt);}
+.tt-sub-tile:hover{border-color:var(--accent);background:var(--surface);}
+.tt-sub-tile-id{font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700;}
+.tt-sub-tile-name{font-size:12.5px;color:var(--text);margin-top:4px;}
+
+.tt-proc-list{display:flex;flex-direction:column;gap:8px;}
+.tt-proc-row{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--border-soft);border-radius:7px;background:var(--panel-alt);}
+.tt-proc-actor{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--accent2);flex-shrink:0;min-width:140px;}
+.tt-proc-activity{font-size:12.5px;color:var(--text-dim);line-height:1.6;}
+
+.tt-ds-list{display:flex;flex-direction:column;gap:8px;}
+.tt-ds-row{padding:10px 12px;border:1px solid var(--border-soft);border-radius:7px;background:var(--panel-alt);}
+.tt-ds-source{font-family:var(--mono);font-size:11.5px;font-weight:700;color:#14b8a6;margin-bottom:3px;}
+.tt-ds-detail{font-size:12.5px;color:var(--text-dim);line-height:1.6;}
+
+.tt-query-block{border:1px solid var(--border);border-radius:8px;margin-bottom:14px;overflow:hidden;background:#04090f;}
+body.light .tt-query-block{background:#eef2f7;}
+.tt-query-head{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--panel-alt);
+  border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap;}
+.tt-query-title{font-size:12px;color:var(--text);font-weight:600;}
+.tt-query-lang{font-family:var(--mono);font-size:9.5px;letter-spacing:1px;padding:2px 8px;border-radius:10px;
+  background:rgba(0,212,255,.12);color:var(--accent);font-weight:700;flex-shrink:0;}
+.tt-query-desc{font-size:11.5px;color:var(--dim);padding:8px 12px 0;}
+.tt-query-copy{font-family:var(--mono);font-size:10px;color:var(--dim);background:transparent;border:1px solid var(--border);
+  border-radius:5px;padding:3px 9px;cursor:pointer;transition:.15s;flex-shrink:0;}
+.tt-query-copy:hover{color:var(--accent);border-color:var(--accent);}
+.tt-query-copy.copied{color:#00d4ff;border-color:#00d4ff;}
+.tt-query-pre{margin:0;padding:12px;font-family:var(--mono);font-size:11.5px;line-height:1.6;color:#9fd8ff;
+  overflow-x:auto;white-space:pre;}
+body.light .tt-query-pre{color:#0d3a5c;}
+
+.tt-fp-list,.tt-resp-list{display:flex;flex-direction:column;gap:9px;}
+.tt-fp-item,.tt-resp-item{display:flex;gap:10px;font-size:12.5px;color:var(--text-dim);line-height:1.6;}
+.tt-fp-item::before{content:'⚠';color:#f59e0b;flex-shrink:0;}
+.tt-resp-item{counter-increment:resp;}
+.tt-resp-list{counter-reset:resp;}
+.tt-resp-item::before{content:counter(resp);flex-shrink:0;width:18px;height:18px;border-radius:50%;background:var(--surface);
+  border:1px solid var(--border);color:var(--accent);font-family:var(--mono);font-size:10px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;}
+
+.tt-mit-list{display:flex;flex-direction:column;gap:8px;}
+.tt-mit-row{display:flex;gap:10px;padding:9px 12px;border:1px solid var(--border-soft);border-radius:7px;background:var(--panel-alt);}
+.tt-mit-id{font-family:var(--mono);font-size:10.5px;color:var(--dim);flex-shrink:0;min-width:42px;}
+.tt-mit-name{font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px;}
+.tt-mit-detail{font-size:12px;color:var(--text-dim);line-height:1.5;}
+
+.tt-jump-nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);}
+.tt-jump-btn{font-family:var(--mono);font-size:11px;padding:6px 12px;border-radius:6px;border:1px solid var(--border);
+  color:var(--dim);cursor:pointer;background:transparent;transition:.15s;}
+.tt-jump-btn:hover{color:var(--accent);border-color:var(--accent);}
+.tt-jump-btn.active{color:var(--accent);border-color:var(--accent);background:rgba(0,212,255,.06);}
+
+/* ── Working-mode checklist ── */
+.tt-progress{font-family:var(--mono);font-size:10.5px;color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0;}
+.tt-progress b{color:var(--accent);}
+.tt-checklist-reset{font-family:var(--mono);font-size:10px;color:var(--dim);background:transparent;border:1px solid var(--border);
+  border-radius:5px;padding:2px 8px;cursor:pointer;margin-left:auto;flex-shrink:0;}
+.tt-checklist-reset:hover{color:var(--accent);border-color:var(--accent);}
+.tt-check-item{display:flex;gap:10px;font-size:12.5px;color:var(--text-dim);line-height:1.6;cursor:pointer;
+  padding:2px 4px;border-radius:5px;transition:.12s;}
+.tt-check-item:hover{background:var(--surface);}
+.tt-check-box{flex-shrink:0;width:18px;height:18px;border-radius:5px;border:1px solid var(--border-strong);
+  display:flex;align-items:center;justify-content:center;margin-top:1px;transition:.12s;}
+.tt-check-item.done .tt-check-box{background:var(--accent);border-color:var(--accent);}
+.tt-check-box svg{width:11px;height:11px;color:var(--bg);opacity:0;transition:.12s;}
+.tt-check-item.done .tt-check-box svg{opacity:1;}
+.tt-check-item.done .tt-check-text{color:var(--muted-dim);text-decoration:line-through;}
+
+/* ── Related techniques ── */
+.tt-related-grid{display:flex;flex-direction:column;gap:8px;}
+.tt-related-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border-soft);
+  border-radius:7px;background:var(--panel-alt);cursor:pointer;transition:.15s;text-decoration:none;}
+.tt-related-row:hover{border-color:var(--accent);opacity:1;}
+.tt-related-id{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent2);flex-shrink:0;min-width:78px;}
+.tt-related-body{min-width:0;}
+.tt-related-name{font-size:12.5px;color:var(--text);font-weight:600;margin-bottom:2px;}
+.tt-related-name .ext{font-family:var(--mono);font-size:9px;color:var(--dim);font-weight:400;margin-left:6px;}
+.tt-related-why{font-size:12px;color:var(--text-dim);line-height:1.55;}
+
+/* ── Continue the hunt (platform cross-links) ── */
+.tt-hunt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;}
+.tt-hunt-card{display:block;border:1px solid var(--border-soft);border-radius:8px;padding:14px 16px;background:var(--panel-alt);
+  text-decoration:none;transition:.15s;}
+.tt-hunt-card:hover{border-color:var(--accent);opacity:1;background:var(--surface);}
+.tt-hunt-tool{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);margin-bottom:4px;}
+.tt-hunt-desc{font-size:12px;color:var(--text-dim);line-height:1.55;}
+
+/* ── Sidebar working-mode dot ── */
+.tt-sub-progress-dot{width:6px;height:6px;border-radius:50%;background:var(--muted-dim);flex-shrink:0;margin-left:auto;}
+.tt-sub-progress-dot.some{background:#f59e0b;}
+.tt-sub-progress-dot.done{background:#00d4ff;}
+
+@media(max-width:900px){
+  .tt-body{flex-direction:column;}
+  .tt-sidebar{position:fixed;top:var(--nav-h);left:0;bottom:0;width:min(360px,88vw);z-index:60;transform:translateX(-100%);
+    box-shadow:0 0 30px rgba(0,0,0,.4);}
+  .tt-sidebar.open{transform:translateX(0);}
+  .tt-sidebar-backdrop{display:block;position:fixed;top:var(--nav-h);left:0;right:0;bottom:0;z-index:55;
+    background:rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .2s;}
+  .tt-sidebar-backdrop.open{opacity:1;pointer-events:auto;}
+  .tt-sidebar-toggle{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--dim);
+    background:var(--panel-alt);border:1px solid var(--border);border-radius:6px;padding:9px 12px;margin:10px 12px;
+    cursor:pointer;width:fit-content;flex-shrink:0;}
+  .tt-sidebar-toggle:hover{color:var(--accent);border-color:var(--accent);}
+  .tt-detail{width:100%;}
+  .tt-detail-inner{padding:20px 16px 60px;}
+  .tt-detail-head{gap:10px;}
+  .tt-detail-title{font-size:20px;}
+  .tt-proc-row{flex-direction:column;gap:3px;}
+  .tt-proc-actor{min-width:0;}
+  .tt-mit-row{flex-direction:column;gap:2px;}
+  .tt-mit-id{min-width:0;}
+}
+@media(max-width:480px){
+  .tt-sub-grid{grid-template-columns:1fr 1fr;}
+  .tt-detail-inner{padding:16px 12px 50px;}
+  .tt-detail-title{font-size:18px;}
+  .tt-query-pre{font-size:10.5px;}
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="hamburger" id="hamburger" onclick="toggleDrawer()" role="button" aria-label="Open menu">
+    <span></span><span></span><span></span>
+  </div>
+  <a class="nav-brand" href="https://h3ad-sec.github.io">
+    <img id="navLogo" src="https://raw.githubusercontent.com/h3ad-sec/h3ad-sec.github.io/main/logo-dark.png" alt="H3AD-SEC" />
+  </a>
+  <a class="xv-nav-pill" id="xv-nav-pill" href="https://h3ad-sec.github.io/TTPHUNT/" style="text-decoration:none">
+    <span class="xv-pill-name"><span class="xv-pill-accent">TTP</span><span class="xv-pill-text">HUNT</span></span>
+    <span class="xv-pill-tagline">Hunt the Technique.</span>
+  </a>
+  <div class="nav-links">
+      <div class="nav-divider"></div>
+      <a href="https://h3ad-sec.github.io/H3AD/">H3AD</a>
+      <div class="nav-divider"></div>
+      <div class="nav-item">
+        <a href="https://h3ad-sec.github.io/H3AD-X/">H3AD-X</a>
+        <div class="nav-dropdown"><div class="nav-dropdown-inner">
+          <a href="https://h3ad-sec.github.io/IOC-VERDIKT/" target="_blank" rel="noopener">IOC-VERDIKT</a>
+          <a href="https://h3ad-sec.github.io/PARSE-X/" target="_blank" rel="noopener">PARSE-X</a>
+          <a href="https://h3ad-sec.github.io/DNSCOPE/" target="_blank" rel="noopener">DNSCOPE</a>
+          <a href="https://h3ad-sec.github.io/X-VERDIKT/" target="_blank" rel="noopener">X-VERDIKT</a>
+          <a href="https://h3ad-sec.github.io/MAILSCOPE/" target="_blank" rel="noopener">MAILSCOPE</a>
+          <a href="https://h3ad-sec.github.io/INFRA-SCOPE/" target="_blank" rel="noopener">INFRA-SCOPE</a>
+        </div></div>
+      </div>
+      <div class="nav-item">
+        <a href="https://h3ad-sec.github.io/H3AD-AI/">H3AD-AI</a>
+        <div class="nav-dropdown"><div class="nav-dropdown-inner">
+          <a href="https://h3ad-sec.github.io/PROMPTVAULT/" target="_blank" rel="noopener">PROMPTVAULT</a>
+        </div></div>
+      </div>
+      <div class="nav-item">
+        <a href="https://h3ad-sec.github.io/H3AD-DETECT/">H3AD-DETECT</a>
+        <div class="nav-dropdown"><div class="nav-dropdown-inner">
+          <a href="https://h3ad-sec.github.io/TRACERULES/" target="_blank" rel="noopener">TRACERULES</a>
+        </div></div>
+      </div>
+      <div class="nav-item">
+        <a href="https://h3ad-sec.github.io/H3AD-HUNT/">H3AD-HUNT</a>
+        <div class="nav-dropdown"><div class="nav-dropdown-inner">
+          <a href="https://h3ad-sec.github.io/HYPOS/" target="_blank" rel="noopener">HYPOS</a>
+          <a href="https://h3ad-sec.github.io/PIVEX/" target="_blank" rel="noopener">PIVEX</a>
+          <a href="https://h3ad-sec.github.io/TRACEPULSE/" target="_blank" rel="noopener">TRACEPULSE</a>
+          <a href="https://h3ad-sec.github.io/LOLBIN-R/" target="_blank" rel="noopener">LOLBIN-R</a>
+          <a href="https://h3ad-sec.github.io/TTPHUNT/" target="_blank" rel="noopener" class="nav-current">TTPHUNT</a>
+        </div></div>
+      </div>
+      <div class="nav-item">
+        <a href="https://h3ad-sec.github.io/H3AD-OPS/">H3AD-OPS</a>
+        <div class="nav-dropdown"><div class="nav-dropdown-inner">
+          <a href="https://h3ad-sec.github.io/QUICKTRACE/" target="_blank" rel="noopener">QUICKTRACE</a>
+          <a href="https://h3ad-sec.github.io/PHISHOPS/" target="_blank" rel="noopener">PHISHOPS</a>
+        </div></div>
+      </div>
+      <div class="nav-item">
+        <a href="https://h3ad-sec.github.io/H3AD-DF/">H3AD-DF</a>
+        <div class="nav-dropdown"><div class="nav-dropdown-inner">
+          <a href="https://h3ad-sec.github.io/ARTIFEKTX/" target="_blank" rel="noopener">ARTIFEKTX</a>
+          <a href="https://h3ad-sec.github.io/CHRONIFY/" target="_blank" rel="noopener">CHRONIFY</a>
+          <a href="https://h3ad-sec.github.io/WIN-EVT/" target="_blank" rel="noopener">WIN-EVT</a>
+        </div></div>
+      </div>
+      <a href="https://h3ad-sec.github.io/H3AD-IR/">H3AD-IR</a>
+      <div class="nav-item">
+        <a href="https://h3ad-sec.github.io/H3AD-LEARN/">H3AD-LEARN</a>
+        <div class="nav-dropdown"><div class="nav-dropdown-inner">
+          <a href="https://h3ad-sec.github.io/H3AD-LEARN/fundamentals/" target="_blank" rel="noopener">FUNDAMENTALS</a>
+          <a href="https://h3ad-sec.github.io/H3AD-LEARN/networking/" target="_blank" rel="noopener">NETWORKING</a>
+          <a href="https://h3ad-sec.github.io/H3AD-LEARN/windows/" target="_blank" rel="noopener">WINDOWS</a>
+          <a href="https://h3ad-sec.github.io/H3AD-LEARN/threat-hunting/" target="_blank" rel="noopener">THREAT HUNTING</a>
+          <a href="https://h3ad-sec.github.io/H3AD-LEARN/lolbas/" target="_blank" rel="noopener">LOLBAS</a>
+          <a href="https://h3ad-sec.github.io/H3AD-LEARN/threat-intel/" target="_blank" rel="noopener">THREAT INTEL</a>
+          <a href="https://h3ad-sec.github.io/H3AD-LEARN/cloud-security/" target="_blank" rel="noopener">CLOUD SECURITY</a>
+          <a href="https://h3ad-sec.github.io/H3AD-LEARN/interview-prep/" target="_blank" rel="noopener">INTERVIEW PREP</a>
+        </div></div>
+      </div>
+      <div class="nav-divider"></div>
+      <a href="mailto:h3adsec@gmail.com">CONTACT</a>
+    </div>
+  <div class="nav-right">
+    <div class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" role="button" aria-label="Toggle theme">
+      <div class="toggle-track"><div class="toggle-thumb"></div></div>
+    </div>
+  </div>
+</nav>
+
+<div class="nav-drawer" id="navDrawer">
+  <a href="https://h3ad-sec.github.io/H3AD/" onclick="closeDrawer()">H3AD</a>
+  <a href="https://h3ad-sec.github.io/H3AD-X/" onclick="closeDrawer()">H3AD-X</a>
+  <a href="https://h3ad-sec.github.io/IOC-VERDIKT/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ IOC-VERDIKT ↗</a>
+  <a href="https://h3ad-sec.github.io/PARSE-X/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ PARSE-X ↗</a>
+  <a href="https://h3ad-sec.github.io/DNSCOPE/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ DNSCOPE ↗</a>
+  <a href="https://h3ad-sec.github.io/X-VERDIKT/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ X-VERDIKT ↗</a>
+  <a href="https://h3ad-sec.github.io/MAILSCOPE/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ MAILSCOPE ↗</a>
+  <a href="https://h3ad-sec.github.io/INFRA-SCOPE/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ INFRA-SCOPE ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-AI/" onclick="closeDrawer()">H3AD-AI</a>
+  <a href="https://h3ad-sec.github.io/PROMPTVAULT/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ PROMPTVAULT ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-DETECT/" onclick="closeDrawer()">H3AD-DETECT</a>
+  <a href="https://h3ad-sec.github.io/TRACERULES/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ TRACERULES ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-HUNT/" onclick="closeDrawer()">H3AD-HUNT</a>
+  <a href="https://h3ad-sec.github.io/HYPOS/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ HYPOS ↗</a>
+  <a href="https://h3ad-sec.github.io/PIVEX/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ PIVEX ↗</a>
+  <a href="https://h3ad-sec.github.io/TRACEPULSE/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ TRACEPULSE ↗</a>
+  <a href="https://h3ad-sec.github.io/LOLBIN-R/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ LOLBIN-R ↗</a>
+  <a href="https://h3ad-sec.github.io/TTPHUNT/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub nav-current">↳ TTPHUNT ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-OPS/" onclick="closeDrawer()">H3AD-OPS</a>
+  <a href="https://h3ad-sec.github.io/QUICKTRACE/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ QUICKTRACE ↗</a>
+  <a href="https://h3ad-sec.github.io/PHISHOPS/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ PHISHOPS ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-DF/" onclick="closeDrawer()">H3AD-DF</a>
+  <a href="https://h3ad-sec.github.io/ARTIFEKTX/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ ARTIFEKTX ↗</a>
+  <a href="https://h3ad-sec.github.io/CHRONIFY/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ CHRONIFY ↗</a>
+  <a href="https://h3ad-sec.github.io/WIN-EVT/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ WIN-EVT ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-IR/" onclick="closeDrawer()">H3AD-IR</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/" onclick="closeDrawer()">H3AD-LEARN</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/fundamentals/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ FUNDAMENTALS ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/networking/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ NETWORKING ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/windows/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ WINDOWS ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/threat-hunting/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ THREAT HUNTING ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/lolbas/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ LOLBAS ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/threat-intel/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ THREAT INTEL ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/cloud-security/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ CLOUD SECURITY ↗</a>
+  <a href="https://h3ad-sec.github.io/H3AD-LEARN/interview-prep/" target="_blank" rel="noopener" onclick="closeDrawer()" class="drawer-sub">↳ INTERVIEW PREP ↗</a>
+  <a href="mailto:h3adsec@gmail.com" onclick="closeDrawer()">CONTACT</a>
+</div>
+
+<div class="tt-app">
+  <div class="tt-body">
+    <aside class="tt-sidebar" id="sidebar">
+      <div class="tt-search-box">
+        <div class="tt-search-wrap">
+          <span class="glyph"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
+          <input id="searchInput" type="search" placeholder="search technique, ID, tool..." autocomplete="off" spellcheck="false" oninput="onSearch()" />
+        </div>
+      </div>
+      <div class="tt-sidebar-stats" id="sidebarStats"></div>
+      <div class="tt-tree" id="tree"></div>
+    </aside>
+
+    <div class="tt-sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()"></div>
+    <button class="tt-sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">☰ Techniques</button>
+
+    <main class="tt-detail" id="detail">
+      <div class="tt-empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/><path d="M12 8v4l3 3"/></svg>
+        <h2>Pick a tactic, technique, or sub-technique</h2>
+        <p>Start with T1003 OS Credential Dumping in the sidebar. Each entry covers procedure examples, data sources, detection queries, false-positive guidance, and response steps.</p>
+      </div>
+    </main>
+  </div>
+</div>
+
+<footer class="tracer-footer">
+  <span class="footer-left">H3AD-SEC © 2026 &nbsp;|&nbsp; TTPHUNT</span>
+  <span class="footer-right">ATT&amp;CK HUNTING GUIDES</span>
+  <div class="footer-credit-row">
+    <a class="footer-credit-pill" href="https://www.linkedin.com/in/hrushikesh-badgujar/" target="_blank" rel="noopener" title="Connect on LinkedIn">
+      <span class="credit-tool"><span class="xv-pill-accent">TTP</span><span class="xv-pill-text">HUNT</span></span>
+      <span class="credit-by">created by</span>
+      <span class="credit-name">H3AD</span>
+    </a>
+  </div>
+</footer>
+
+<script>
+function toggleDrawer(){document.getElementById('navDrawer').classList.toggle('open');}
+function closeDrawer(){document.getElementById('navDrawer').classList.remove('open');}
+function toggleSidebar(){
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarBackdrop').classList.toggle('open');
+}
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape')document.getElementById('sidebar').classList.remove('open'),document.getElementById('sidebarBackdrop').classList.remove('open');
+});
+
+(function(){
+  var saved=localStorage.getItem('h3ad-theme');
+  if(saved==='light')document.body.classList.add('light');
+  var logo=document.getElementById('navLogo');
+  if(logo)logo.src=document.body.classList.contains('light')
+    ?'https://raw.githubusercontent.com/h3ad-sec/h3ad-sec.github.io/main/logo-light.png'
+    :'https://raw.githubusercontent.com/h3ad-sec/h3ad-sec.github.io/main/logo-dark.png';
+})();
+function toggleTheme(){
+  var isLight=document.body.classList.toggle('light');
+  localStorage.setItem('h3ad-theme',isLight?'light':'dark');
+  var logo=document.getElementById('navLogo');
+  if(logo)logo.src=isLight
+    ?'https://raw.githubusercontent.com/h3ad-sec/h3ad-sec.github.io/main/logo-light.png'
+    :'https://raw.githubusercontent.com/h3ad-sec/h3ad-sec.github.io/main/logo-dark.png';
+}
+
+/* ── State ── */
+var manifest=null;
+var techniqueCache={};   // id -> full technique JSON (with subtechniques[])
+var collapsedTactics={};
+var collapsedTechniques={};
+var currentView=null;    // {type:'technique'|'sub', techniqueId, subId}
+var searchTerm='';
+var searchIndex={};      // subId -> lowercase searchable blob
+var techSearchIndex={};  // techId -> lowercase searchable blob
+var searchIndexReady=false;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+/* ── Working-mode checklist (localStorage, per sub-technique) ── */
+var CHECKLIST_KEY='ttphunt_checklist_v1';
+function loadChecklists(){
+  try{ return JSON.parse(localStorage.getItem(CHECKLIST_KEY))||{}; }catch(e){ return {}; }
+}
+function saveChecklists(obj){
+  try{ localStorage.setItem(CHECKLIST_KEY,JSON.stringify(obj)); }catch(e){}
+}
+function getChecklist(subId,len){
+  var all=loadChecklists();
+  var arr=all[subId]||[];
+  while(arr.length<len)arr.push(false);
+  return arr;
+}
+function toggleCheck(subId,idx,len){
+  var all=loadChecklists();
+  var arr=all[subId]||[];
+  while(arr.length<len)arr.push(false);
+  arr[idx]=!arr[idx];
+  all[subId]=arr;
+  saveChecklists(all);
+  var item=document.getElementById('chk-'+idx);
+  if(item)item.classList.toggle('done',arr[idx]);
+  updateProgressLabel(subId,len);
+}
+function resetChecklist(subId,len){
+  var all=loadChecklists();
+  all[subId]=new Array(len).fill(false);
+  saveChecklists(all);
+  if(currentView && currentView.subId===subId)loadTechnique(currentView.techniqueId).then(function(full){
+    var sub=full.subtechniques.filter(function(s){return s.id===subId;})[0];
+    if(sub)renderSubDetail(full,sub);
+  });
+}
+function updateProgressLabel(subId,len){
+  var arr=getChecklist(subId,len);
+  var done=arr.filter(Boolean).length;
+  var el=document.getElementById('progressLabel');
+  if(el)el.innerHTML='<b>'+done+'</b>/'+len+' complete';
+}
+function checklistDot(subId){
+  var all=loadChecklists();
+  var arr=all[subId];
+  if(!arr||!arr.length)return '';
+  var done=arr.filter(Boolean).length;
+  if(done===0)return '';
+  if(done>=arr.length)return ' done';
+  return ' some';
+}
+
+/* ── Full-content search index ── */
+function buildSearchIndexFor(full){
+  var techBlob=[full.id,full.name,full.overview].concat(
+    (full.prerequisite_concepts||[]).map(function(c){return c.term+' '+c.explanation;})
+  ).join(' ').toLowerCase();
+  techSearchIndex[full.id]=techBlob;
+  full.subtechniques.forEach(function(s){
+    var parts=[s.id,s.name,s.overview];
+    (s.concepts||[]).forEach(function(c){parts.push(c.term,c.explanation);});
+    (s.procedure_examples||[]).forEach(function(p){parts.push(p.actor,p.activity);});
+    (s.data_sources||[]).forEach(function(d){parts.push(d.source,d.detail);});
+    (s.detection_queries||[]).forEach(function(q){parts.push(q.title,q.language,q.description,q.query);});
+    (s.false_positives||[]).forEach(function(f){parts.push(f);});
+    (s.response_steps||[]).forEach(function(r){parts.push(r);});
+    (s.mitigations||[]).forEach(function(m){parts.push(m.id,m.name,m.detail);});
+    (s.related||[]).forEach(function(r){parts.push(r.id,r.name,r.relation);});
+    searchIndex[s.id]=parts.join(' ').toLowerCase();
+  });
+}
+function prefetchAllForSearch(){
+  Promise.all(manifest.techniques.map(function(t){ return loadTechnique(t.id).then(buildSearchIndexFor); }))
+    .then(function(){ searchIndexReady=true; if(searchTerm)renderTree(); });
+}
+function techMatchesSearch(t){
+  if(!searchTerm)return true;
+  if(matchesSearch(t.id+' '+t.name))return true;
+  if(techSearchIndex[t.id] && techSearchIndex[t.id].indexOf(searchTerm)!==-1)return true;
+  return t.subtechniques.some(function(s){ return subMatchesSearch(s); });
+}
+function subMatchesSearch(s){
+  if(!searchTerm)return true;
+  var blob=searchIndex[s.id];
+  if(blob)return blob.indexOf(searchTerm)!==-1;
+  return matchesSearch(s.id+' '+s.name);
+}
+
+fetch('data/manifest.json').then(function(r){return r.json();}).then(function(m){
+  manifest=m;
+  renderStats();
+  renderTree();
+  prefetchAllForSearch();
+  handleHashRoute();
+}).catch(function(e){
+  document.getElementById('tree').innerHTML='<div class="tt-future-note">Failed to load manifest.json — '+esc(e.message)+'</div>';
+});
+
+function renderStats(){
+  var subCount=0;
+  manifest.techniques.forEach(function(t){ subCount+=t.subtechniques.length; });
+  document.getElementById('sidebarStats').textContent=manifest.techniques.length+' technique'+(manifest.techniques.length===1?'':'s')+' · '+subCount+' sub-techniques';
+}
+
+function groupByTactic(){
+  var groups={};
+  manifest.techniques.forEach(function(t){
+    var key=t.tactic_name;
+    if(!groups[key])groups[key]=[];
+    groups[key].push(t);
+  });
+  return groups;
+}
+
+function matchesSearch(text){
+  if(!searchTerm)return true;
+  return text.toLowerCase().indexOf(searchTerm)!==-1;
+}
+
+function renderTree(){
+  var groups=groupByTactic();
+  var html='';
+  Object.keys(groups).forEach(function(tacticName){
+    var techniques=groups[tacticName];
+    var visibleTechniques=techniques.filter(techMatchesSearch);
+    if(searchTerm && visibleTechniques.length===0)return;
+    var tCollapsed=collapsedTactics[tacticName];
+    html+='<div class="tt-tactic-group'+(tCollapsed?' collapsed':'')+'" data-tactic="'+esc(tacticName)+'">';
+    html+='<div class="tt-tactic-head" onclick="toggleTactic(\''+esc(tacticName).replace(/'/g,"\\'")+'\')">';
+    html+='<svg class="tt-tactic-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>';
+    html+=esc(tacticName)+'</div>';
+    html+='<div class="tt-technique-list">';
+    visibleTechniques.forEach(function(t){
+      var subMatches=t.subtechniques.filter(function(s){ return !searchTerm || matchesSearch(t.id+' '+t.name) || subMatchesSearch(s); });
+      var techActive=currentView && currentView.techniqueId===t.id && currentView.type==='technique';
+      var tcCollapsed=collapsedTechniques[t.id]===true || (collapsedTechniques[t.id]===undefined && false);
+      if(searchTerm)tcCollapsed=false;
+      html+='<div class="tt-technique'+(tcCollapsed?' collapsed':'')+'" data-technique="'+esc(t.id)+'">';
+      html+='<div class="tt-technique-head'+(techActive?' active':'')+'">';
+      html+='<svg class="tt-technique-caret" onclick="toggleTechnique(event,\''+esc(t.id)+'\')" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 9l6 6 6-6"/></svg>';
+      html+='<span onclick="selectTechnique(\''+esc(t.id)+'\')" style="display:flex;align-items:center;gap:7px;flex:1;min-width:0;">';
+      html+='<span class="tt-technique-id">'+esc(t.id)+'</span><span class="tt-technique-name">'+esc(t.name)+'</span>';
+      html+='<span class="tt-technique-count">'+t.subtechniques.length+'</span></span></div>';
+      html+='<div class="tt-sub-list">';
+      subMatches.forEach(function(s){
+        var subActive=currentView && currentView.type==='sub' && currentView.subId===s.id;
+        html+='<div class="tt-sub-item'+(subActive?' active':'')+'" onclick="selectSub(\''+esc(t.id)+'\',\''+esc(s.id)+'\')">';
+        html+='<span class="tt-sub-id">'+esc(s.id)+'</span><span class="tt-sub-name">'+esc(s.name)+'</span>';
+        html+='<span class="tt-sub-progress-dot'+checklistDot(s.id)+'"></span></div>';
+      });
+      html+='</div></div>';
+    });
+    html+='</div></div>';
+  });
+  html+='<div class="tt-future-note">More ATT&amp;CK technique guides land here over time — each new pack just adds a tactic/technique node, no layout changes.</div>';
+  document.getElementById('tree').innerHTML=html;
+}
+
+function toggleTactic(name){
+  collapsedTactics[name]=!collapsedTactics[name];
+  renderTree();
+}
+function toggleTechnique(ev,id){
+  ev.stopPropagation();
+  collapsedTechniques[id]=!(collapsedTechniques[id]===true);
+  renderTree();
+}
+function onSearch(){
+  searchTerm=document.getElementById('searchInput').value.trim().toLowerCase();
+  renderTree();
+}
+
+function loadTechnique(id){
+  if(techniqueCache[id])return Promise.resolve(techniqueCache[id]);
+  var entry=null;
+  manifest.techniques.forEach(function(t){ if(t.id===id)entry=t; });
+  if(!entry)return Promise.reject(new Error('Unknown technique '+id));
+  return fetch('data/'+entry.file).then(function(r){return r.json();}).then(function(full){
+    techniqueCache[id]=full;
+    return full;
+  });
+}
+
+function selectTechnique(id,opts){
+  currentView={type:'technique',techniqueId:id};
+  renderTree();
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop').classList.remove('open');
+  document.getElementById('detail').innerHTML='<div class="tt-empty"><p>Loading '+esc(id)+'…</p></div>';
+  if(!(opts&&opts.fromHash))location.hash=id;
+  loadTechnique(id).then(renderTechniqueLanding).catch(renderError);
+}
+
+function selectSub(techId,subId,opts){
+  currentView={type:'sub',techniqueId:techId,subId:subId};
+  renderTree();
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop').classList.remove('open');
+  document.getElementById('detail').innerHTML='<div class="tt-empty"><p>Loading '+esc(subId)+'…</p></div>';
+  if(!(opts&&opts.fromHash))location.hash=subId;
+  loadTechnique(techId).then(function(full){
+    var sub=full.subtechniques.filter(function(s){return s.id===subId;})[0];
+    if(!sub)throw new Error('Sub-technique not found: '+subId);
+    renderSubDetail(full,sub);
+    window.scrollTo(0,0);
+    document.getElementById('detail').scrollTop=0;
+  }).catch(renderError);
+}
+
+function handleHashRoute(){
+  if(!manifest)return;
+  var raw=decodeURIComponent(location.hash.replace(/^#/,''));
+  if(!raw)return;
+  if(currentView && ((currentView.type==='sub'&&currentView.subId===raw) || (currentView.type==='technique'&&currentView.techniqueId===raw)))return;
+  var found=null, parentId=null;
+  manifest.techniques.forEach(function(t){
+    if(t.id===raw)found='technique';
+    t.subtechniques.forEach(function(s){ if(s.id===raw){found='sub'; parentId=t.id;} });
+  });
+  if(found==='sub')selectSub(parentId,raw,{fromHash:true});
+  else if(found==='technique')selectTechnique(raw,{fromHash:true});
+}
+window.addEventListener('hashchange',handleHashRoute);
+
+function renderError(e){
+  document.getElementById('detail').innerHTML='<div class="tt-empty"><h2>Couldn\'t load that entry</h2><p>'+esc(e.message)+'</p></div>';
+}
+
+function crumb(techFull,subName){
+  var html='<div class="tt-crumb"><a href="#" onclick="selectTechnique(\''+esc(techFull.id)+'\');return false;">'+esc(techFull.id)+' '+esc(techFull.name)+'</a>';
+  if(subName)html+='<span>›</span><span>'+esc(subName)+'</span>';
+  return html+'</div>';
+}
+
+function renderTechniqueLanding(full){
+  var html=crumb(full,null);
+  html+='<div class="tt-detail-head"><div>';
+  html+='<div class="tt-detail-id">'+esc(full.id)+'</div>';
+  html+='<div class="tt-detail-title">'+esc(full.name)+'</div>';
+  html+='</div>';
+  if(full.mitre_url)html+='<a class="tt-mitre-link" href="'+esc(full.mitre_url)+'" target="_blank" rel="noopener">View on attack.mitre.org ↗</a>';
+  html+='</div>';
+  html+='<div class="tt-badge-row">';
+  html+='<span class="tt-badge tactic">'+esc(full.tactic)+' · '+esc(full.tactic_name)+'</span>';
+  (full.platforms||[]).forEach(function(p){ html+='<span class="tt-badge plat">'+esc(p)+'</span>'; });
+  html+='</div>';
+  html+='<div class="tt-prose">'+esc(full.overview)+'</div>';
+
+  if(full.prerequisite_concepts && full.prerequisite_concepts.length){
+    html+='<div class="tt-section"><div class="tt-section-title">Prerequisite Concepts</div>';
+    html+='<div class="tt-concept-grid">';
+    full.prerequisite_concepts.forEach(function(c){
+      html+='<div class="tt-concept-card"><div class="tt-concept-term">'+esc(c.term)+'</div><div class="tt-concept-exp">'+esc(c.explanation)+'</div></div>';
+    });
+    html+='</div></div>';
+  }
+
+  html+='<div class="tt-section"><div class="tt-section-title">Sub-techniques ('+full.subtechniques.length+')</div>';
+  html+='<div class="tt-sub-grid">';
+  full.subtechniques.forEach(function(s){
+    html+='<div class="tt-sub-tile" onclick="selectSub(\''+esc(full.id)+'\',\''+esc(s.id)+'\')">';
+    html+='<div class="tt-sub-tile-id">'+esc(s.id)+'</div><div class="tt-sub-tile-name">'+esc(s.name)+'</div></div>';
+  });
+  html+='</div></div>';
+
+  document.getElementById('detail').innerHTML='<div class="tt-detail-inner">'+html+'</div>';
+}
+
+function copyQuery(btnId,text){
+  var btn=document.getElementById(btnId);
+  navigator.clipboard.writeText(text).then(function(){
+    btn.textContent='Copied';
+    btn.classList.add('copied');
+    setTimeout(function(){ btn.textContent='Copy'; btn.classList.remove('copied'); },1500);
+  }).catch(function(){
+    btn.textContent='Failed';
+    setTimeout(function(){ btn.textContent='Copy'; },1500);
+  });
+}
+
+var queryIdCounter=0;
+function renderSubDetail(full,sub){
+  var html=crumb(full,sub.id+' '+sub.name);
+  html+='<div class="tt-detail-head"><div>';
+  html+='<div class="tt-detail-id">'+esc(sub.id)+' · '+esc(full.name)+'</div>';
+  html+='<div class="tt-detail-title">'+esc(sub.name)+'</div>';
+  html+='</div>';
+  if(sub.mitre_url)html+='<a class="tt-mitre-link" href="'+esc(sub.mitre_url)+'" target="_blank" rel="noopener">View on attack.mitre.org ↗</a>';
+  html+='</div>';
+  html+='<div class="tt-badge-row">';
+  html+='<span class="tt-badge tactic">'+esc(sub.tactic)+' · '+esc(sub.tactic_name)+'</span>';
+  (sub.platforms||[]).forEach(function(p){ html+='<span class="tt-badge plat">'+esc(p)+'</span>'; });
+  html+='</div>';
+  html+='<div class="tt-prose">'+esc(sub.overview)+'</div>';
+
+  if(sub.concepts && sub.concepts.length){
+    html+='<div class="tt-section"><div class="tt-section-title">How It Works</div>';
+    html+='<div class="tt-concept-grid">';
+    sub.concepts.forEach(function(c){
+      html+='<div class="tt-concept-card"><div class="tt-concept-term">'+esc(c.term)+'</div><div class="tt-concept-exp">'+esc(c.explanation)+'</div></div>';
+    });
+    html+='</div></div>';
+  }
+
+  if(sub.procedure_examples && sub.procedure_examples.length){
+    html+='<div class="tt-section"><div class="tt-section-title">Procedure Examples</div><div class="tt-proc-list">';
+    sub.procedure_examples.forEach(function(p){
+      html+='<div class="tt-proc-row"><div class="tt-proc-actor">'+esc(p.actor)+'</div><div class="tt-proc-activity">'+esc(p.activity)+'</div></div>';
+    });
+    html+='</div></div>';
+  }
+
+  if(sub.data_sources && sub.data_sources.length){
+    html+='<div class="tt-section"><div class="tt-section-title">Data Sources</div><div class="tt-ds-list">';
+    sub.data_sources.forEach(function(d){
+      html+='<div class="tt-ds-row"><div class="tt-ds-source">'+esc(d.source)+'</div><div class="tt-ds-detail">'+esc(d.detail)+'</div></div>';
+    });
+    html+='</div></div>';
+  }
+
+  if(sub.detection_queries && sub.detection_queries.length){
+    html+='<div class="tt-section"><div class="tt-section-title">Detection Queries</div>';
+    sub.detection_queries.forEach(function(q){
+      var qid='q'+(queryIdCounter++);
+      html+='<div class="tt-query-block">';
+      html+='<div class="tt-query-head"><span class="tt-query-title">'+esc(q.title)+'</span>';
+      html+='<span style="display:flex;align-items:center;gap:8px;"><span class="tt-query-lang">'+esc(q.language)+'</span>';
+      html+='<button class="tt-query-copy" id="'+qid+'" onclick=\'copyQuery("'+qid+'",'+JSON.stringify(q.query)+')\'>Copy</button></span></div>';
+      if(q.description)html+='<div class="tt-query-desc">'+esc(q.description)+'</div>';
+      html+='<pre class="tt-query-pre">'+esc(q.query)+'</pre>';
+      html+='</div>';
+    });
+    html+='</div>';
+  }
+
+  if(sub.false_positives && sub.false_positives.length){
+    html+='<div class="tt-section"><div class="tt-section-title">False Positive Guidance</div><div class="tt-fp-list">';
+    sub.false_positives.forEach(function(f){ html+='<div class="tt-fp-item">'+esc(f)+'</div>'; });
+    html+='</div></div>';
+  }
+
+  if(sub.response_steps && sub.response_steps.length){
+    var len=sub.response_steps.length;
+    var checks=getChecklist(sub.id,len);
+    var done=checks.filter(Boolean).length;
+    html+='<div class="tt-section"><div class="tt-section-title">Response / Triage Steps <span class="tt-progress" id="progressLabel"><b>'+done+'</b>/'+len+' complete</span>';
+    html+='<button class="tt-checklist-reset" onclick="resetChecklist(\''+esc(sub.id)+'\','+len+')">Reset</button></div>';
+    html+='<div class="tt-resp-list">';
+    sub.response_steps.forEach(function(r,i){
+      html+='<div class="tt-check-item'+(checks[i]?' done':'')+'" id="chk-'+i+'" onclick="toggleCheck(\''+esc(sub.id)+'\','+i+','+len+')">';
+      html+='<span class="tt-check-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>';
+      html+='<span class="tt-check-text">'+esc(r)+'</span></div>';
+    });
+    html+='</div></div>';
+  }
+
+  if(sub.mitigations && sub.mitigations.length){
+    html+='<div class="tt-section"><div class="tt-section-title">Mitigations</div><div class="tt-mit-list">';
+    sub.mitigations.forEach(function(m){
+      html+='<div class="tt-mit-row"><div class="tt-mit-id">'+esc(m.id)+'</div><div><div class="tt-mit-name">'+esc(m.name)+'</div><div class="tt-mit-detail">'+esc(m.detail)+'</div></div></div>';
+    });
+    html+='</div></div>';
+  }
+
+  if(sub.related && sub.related.length){
+    html+='<div class="tt-section"><div class="tt-section-title">Related / Chained Techniques</div><div class="tt-related-grid">';
+    sub.related.forEach(function(r){
+      var isInternal=!r.external && full.subtechniques.some(function(s){return s.id===r.id;});
+      if(isInternal){
+        html+='<div class="tt-related-row" onclick="selectSub(\''+esc(full.id)+'\',\''+esc(r.id)+'\')">';
+        html+='<span class="tt-related-id">'+esc(r.id)+'</span>';
+        html+='<span class="tt-related-body"><span class="tt-related-name">'+esc(r.name)+'</span><br><span class="tt-related-why">'+esc(r.relation)+'</span></span></div>';
+      } else {
+        var base=r.id.split('.')[0];
+        var sub2=r.id.indexOf('.')!==-1?r.id.split('.')[1]:null;
+        var url='https://attack.mitre.org/techniques/'+base+(sub2?'/'+sub2+'/':'/');
+        html+='<a class="tt-related-row" href="'+esc(url)+'" target="_blank" rel="noopener">';
+        html+='<span class="tt-related-id">'+esc(r.id)+'</span>';
+        html+='<span class="tt-related-body"><span class="tt-related-name">'+esc(r.name)+'<span class="ext">MITRE ↗</span></span><br><span class="tt-related-why">'+esc(r.relation)+'</span></span></a>';
+      }
+    });
+    html+='</div></div>';
+  }
+
+  html+='<div class="tt-section"><div class="tt-section-title">Continue the Hunt</div><div class="tt-hunt-grid">';
+  html+='<a class="tt-hunt-card" href="https://h3ad-sec.github.io/PIVEX/" target="_blank" rel="noopener"><div class="tt-hunt-tool">PIVEX ↗</div><div class="tt-hunt-desc">Pivot from a compromised account or host and map the blast radius across the environment.</div></a>';
+  html+='<a class="tt-hunt-card" href="https://h3ad-sec.github.io/HYPOS/" target="_blank" rel="noopener"><div class="tt-hunt-tool">HYPOS ↗</div><div class="tt-hunt-desc">Log this as a hunting hypothesis and track it through to validation.</div></a>';
+  html+='<a class="tt-hunt-card" href="https://h3ad-sec.github.io/TRACERULES/" target="_blank" rel="noopener"><div class="tt-hunt-tool">TRACERULES ↗</div><div class="tt-hunt-desc">Browse the full KQL/Sigma/XQL detection arsenal for more queries beyond what\'s listed here.</div></a>';
+  html+='</div></div>';
+
+  var idx=full.subtechniques.findIndex(function(s){return s.id===sub.id;});
+  html+='<div class="tt-jump-nav">';
+  full.subtechniques.forEach(function(s,i){
+    html+='<button class="tt-jump-btn'+(i===idx?' active':'')+'" onclick="selectSub(\''+esc(full.id)+'\',\''+esc(s.id)+'\')">'+esc(s.id)+'</button>';
+  });
+  html+='</div>';
+
+  document.getElementById('detail').innerHTML='<div class="tt-detail-inner">'+html+'</div>';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "generated": "2026-09-14",
+  "count": 1,
+  "techniques": [
+    {
+      "id": "T1003",
+      "name": "OS Credential Dumping",
+      "tactic": "TA0006",
+      "tactic_name": "Credential Access",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "file": "techniques/T1003.json",
+      "subtechniques": [
+        { "id": "T1003.001", "name": "LSASS Memory" },
+        { "id": "T1003.002", "name": "Security Account Manager" },
+        { "id": "T1003.003", "name": "NTDS" },
+        { "id": "T1003.004", "name": "LSA Secrets" },
+        { "id": "T1003.005", "name": "Cached Domain Credentials" },
+        { "id": "T1003.006", "name": "DCSync" },
+        { "id": "T1003.007", "name": "Proc Filesystem" },
+        { "id": "T1003.008", "name": "/etc/passwd and /etc/shadow" }
+      ]
+    }
+  ]
+}
