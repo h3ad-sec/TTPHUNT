@@ -190,6 +190,19 @@ body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
 .tt-empty h2{font-size:15px;color:var(--text-dim);font-weight:600;}
 .tt-empty p{font-size:12.5px;max-width:360px;}
 
+.tt-home-hero{padding-bottom:8px;}
+.tt-home-title{font-size:28px;font-weight:700;color:var(--text);margin-bottom:10px;line-height:1.25;}
+.tt-home-sub{font-size:13.5px;color:var(--text-dim);line-height:1.75;max-width:680px;}
+.tt-home-stats{display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--dim);}
+.tt-home-stats b{color:var(--accent);font-size:15px;}
+
+.tt-pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;}
+.tt-pack-card{border:1px solid var(--border);border-radius:9px;padding:16px 18px;cursor:pointer;transition:.15s;background:var(--panel-alt);}
+.tt-pack-card:hover{border-color:var(--accent);background:var(--surface);}
+.tt-pack-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
+.tt-pack-name{font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px;}
+.tt-pack-count{font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:10px;}
+
 .tt-crumb{font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:14px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
 .tt-crumb a{color:var(--dim);}
 .tt-crumb a:hover{color:var(--accent);}
@@ -203,6 +216,10 @@ body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
 .tt-badge.plat{color:var(--accent2);}
 .tt-mitre-link{font-family:var(--mono);font-size:10.5px;color:var(--dim);display:inline-flex;align-items:center;gap:4px;}
 .tt-mitre-link:hover{color:var(--accent);}
+.tt-detail-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.tt-export-btn{font-family:var(--mono);font-size:10.5px;color:var(--dim);background:transparent;border:1px solid var(--border);
+  border-radius:5px;padding:4px 10px;cursor:pointer;transition:.15s;white-space:nowrap;}
+.tt-export-btn:hover{color:var(--accent);border-color:var(--accent);}
 
 .tt-section{margin-top:30px;}
 .tt-section-title{font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--accent2);
@@ -314,6 +331,20 @@ body.light .tt-query-pre{color:#0d3a5c;}
 .tt-prose,.tt-concept-exp,.tt-concept-term,.tt-proc-activity,.tt-proc-actor,.tt-ds-detail,.tt-ds-source,
 .tt-query-desc,.tt-fp-item,.tt-check-text,.tt-mit-detail,.tt-mit-name,.tt-related-why,.tt-related-name,
 .tt-hunt-desc,.tt-empty p,.tt-crumb{overflow-wrap:break-word;word-break:break-word;}
+
+@media print{
+  .nav,.nav-drawer,.tt-sidebar,.tt-sidebar-backdrop,.tt-sidebar-toggle,.tracer-footer,
+  .tt-detail-actions,.tt-jump-nav,.tt-query-copy,.tt-checklist-reset,.tt-check-box{display:none!important;}
+  body{background:#fff;color:#000;}
+  .tt-app{padding-top:0;}
+  .tt-detail,.tt-body{overflow:visible!important;height:auto!important;}
+  .tt-detail-inner{max-width:100%;padding:0;}
+  .tt-concept-card,.tt-proc-row,.tt-ds-row,.tt-query-block,.tt-mit-row,.tt-related-row,.tt-hunt-card{
+    border:1px solid #ccc;background:#fafafa;break-inside:avoid;}
+  .tt-query-pre{white-space:pre-wrap;word-break:break-word;color:#000;}
+  .tt-section{break-inside:avoid-page;}
+  a{color:#000;text-decoration:underline;}
+}
 
 @media(max-width:900px){
   .tt-body{flex-direction:column;}
@@ -604,28 +635,31 @@ function checklistDot(subId){
   return ' some';
 }
 
-/* ── Full-content search index ── */
-function buildSearchIndexFor(full){
-  var techBlob=[full.id,full.name,full.overview].concat(
-    (full.prerequisite_concepts||[]).map(function(c){return c.term+' '+c.explanation;})
-  ).join(' ').toLowerCase();
-  techSearchIndex[full.id]=techBlob;
-  full.subtechniques.forEach(function(s){
-    var parts=[s.id,s.name,s.overview];
-    (s.concepts||[]).forEach(function(c){parts.push(c.term,c.explanation);});
-    (s.procedure_examples||[]).forEach(function(p){parts.push(p.actor,p.activity);});
-    (s.data_sources||[]).forEach(function(d){parts.push(d.source,d.detail);});
-    (s.detection_queries||[]).forEach(function(q){parts.push(q.title,q.language,q.description,q.query);});
-    (s.false_positives||[]).forEach(function(f){parts.push(f);});
-    (s.response_steps||[]).forEach(function(r){parts.push(r);});
-    (s.mitigations||[]).forEach(function(m){parts.push(m.id,m.name,m.detail);});
-    (s.related||[]).forEach(function(r){parts.push(r.id,r.name,r.relation);});
-    searchIndex[s.id]=parts.join(' ').toLowerCase();
+/* ── Full-content search index ──
+   Fetches one small precomputed data/search-index.json instead of the old
+   approach of prefetching every technique's full JSON just to index it --
+   see scripts/build_search_index.py. Falls back to per-technique prefetch
+   only if that file is missing (e.g. someone forgot to run the build script
+   after adding a pack), so search still works, just without the optimization. */
+function loadSearchIndex(){
+  fetch('data/search-index.json').then(function(r){
+    if(!r.ok)throw new Error('no search-index.json');
+    return r.json();
+  }).then(function(idx){
+    techSearchIndex=idx.techniques||{};
+    searchIndex=idx.subtechniques||{};
+    searchIndexReady=true;
+    if(searchTerm)renderTree();
+  }).catch(function(){
+    Promise.all(manifest.techniques.map(function(t){
+      return loadTechnique(t.id).then(function(full){
+        techSearchIndex[full.id]=[full.id,full.name,full.overview].join(' ').toLowerCase();
+        full.subtechniques.forEach(function(s){
+          searchIndex[s.id]=[s.id,s.name,s.overview].join(' ').toLowerCase();
+        });
+      });
+    })).then(function(){ searchIndexReady=true; if(searchTerm)renderTree(); });
   });
-}
-function prefetchAllForSearch(){
-  Promise.all(manifest.techniques.map(function(t){ return loadTechnique(t.id).then(buildSearchIndexFor); }))
-    .then(function(){ searchIndexReady=true; if(searchTerm)renderTree(); });
 }
 function techMatchesSearch(t){
   if(!searchTerm)return true;
@@ -644,8 +678,9 @@ fetch('data/manifest.json').then(function(r){return r.json();}).then(function(m)
   manifest=m;
   renderStats();
   renderTree();
-  prefetchAllForSearch();
+  loadSearchIndex();
   handleHashRoute();
+  if(!currentView)renderHome();
 }).catch(function(e){
   document.getElementById('tree').innerHTML='<div class="tt-future-note">Failed to load manifest.json — '+esc(e.message)+'</div>';
 });
@@ -788,10 +823,50 @@ function renderError(e){
   document.getElementById('detail').innerHTML='<div class="tt-empty"><h2>Couldn\'t load that entry</h2><p>'+esc(e.message)+'</p></div>';
 }
 
+function goHome(){
+  currentView=null;
+  if(location.hash)history.pushState(null,'',location.pathname+location.search);
+  renderTree();
+  renderHome();
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop').classList.remove('open');
+}
+
 function crumb(techFull,subName){
-  var html='<div class="tt-crumb"><a href="#" onclick="selectTechnique(\''+esc(techFull.id)+'\');return false;">'+esc(techFull.id)+' '+esc(techFull.name)+'</a>';
+  var html='<div class="tt-crumb"><a href="#" onclick="goHome();return false;">All Techniques</a><span>›</span>';
+  html+='<a href="#" onclick="selectTechnique(\''+esc(techFull.id)+'\');return false;">'+esc(techFull.id)+' '+esc(techFull.name)+'</a>';
   if(subName)html+='<span>›</span><span>'+esc(subName)+'</span>';
   return html+'</div>';
+}
+
+function renderHome(){
+  var subCount=0, tacticSet={};
+  manifest.techniques.forEach(function(t){ subCount+=t.subtechniques.length; tacticSet[t.tactic_name]=true; });
+  var tacticCount=Object.keys(tacticSet).length;
+  var html='<div class="tt-home-hero">';
+  html+='<h1 class="tt-home-title">ATT&amp;CK Hunting Guides</h1>';
+  html+='<p class="tt-home-sub">In-depth, practical MITRE ATT&amp;CK hunting guides: prerequisite concepts, technique mechanics, real procedure examples, data sources, detection queries, false-positive guidance, and a working checklist for every sub-technique below.</p>';
+  html+='<div class="tt-home-stats">';
+  html+='<span><b>'+manifest.techniques.length+'</b> technique'+(manifest.techniques.length===1?'':'s')+'</span>';
+  html+='<span><b>'+subCount+'</b> sub-techniques</span>';
+  html+='<span><b>'+tacticCount+'</b> tactic'+(tacticCount===1?'':'s')+'</span>';
+  html+='</div></div>';
+
+  html+='<div class="tt-section"><div class="tt-section-title">Technique Packs</div><div class="tt-pack-grid">';
+  manifest.techniques.forEach(function(t){
+    html+='<div class="tt-pack-card" onclick="selectTechnique(\''+esc(t.id)+'\')">';
+    html+='<div class="tt-pack-head"><span class="tt-detail-id">'+esc(t.id)+'</span>';
+    html+='<span class="tt-badge tactic">'+esc(t.tactic)+' · '+esc(t.tactic_name)+'</span></div>';
+    html+='<div class="tt-pack-name">'+esc(t.name)+'</div>';
+    html+='<div class="tt-badge-row">';
+    (t.platforms||[]).forEach(function(p){ html+='<span class="tt-badge plat">'+esc(p)+'</span>'; });
+    html+='</div>';
+    html+='<div class="tt-pack-count">'+t.subtechniques.length+' sub-technique'+(t.subtechniques.length===1?'':'s')+'</div>';
+    html+='</div>';
+  });
+  html+='</div></div>';
+
+  document.getElementById('detail').innerHTML='<div class="tt-detail-inner">'+html+'</div>';
 }
 
 function renderTechniqueLanding(full){
@@ -840,6 +915,75 @@ function copyQuery(btnId,text){
   });
 }
 
+function mdEsc(s){ return String(s==null?'':s); }
+
+function exportMarkdown(techId,subId){
+  var full=techniqueCache[techId];
+  if(!full)return;
+  var sub=full.subtechniques.filter(function(s){return s.id===subId;})[0];
+  if(!sub)return;
+  var md='# '+sub.id+' · '+full.name+'\n\n';
+  md+='## '+mdEsc(sub.name)+'\n\n';
+  md+='**Tactic:** '+mdEsc(sub.tactic)+' · '+mdEsc(sub.tactic_name)+'  \n';
+  md+='**Platforms:** '+(sub.platforms||[]).join(', ')+'  \n';
+  if(sub.mitre_url)md+='**Source:** '+sub.mitre_url+'\n';
+  md+='\n'+mdEsc(sub.overview)+'\n\n';
+
+  if(sub.concepts&&sub.concepts.length){
+    md+='## How It Works\n\n';
+    sub.concepts.forEach(function(c){ md+='**'+mdEsc(c.term)+'**  \n'+mdEsc(c.explanation)+'\n\n'; });
+  }
+  if(sub.procedure_examples&&sub.procedure_examples.length){
+    md+='## Procedure Examples\n\n';
+    sub.procedure_examples.forEach(function(p){ md+='- **'+mdEsc(p.actor)+'** — '+mdEsc(p.activity)+'\n'; });
+    md+='\n';
+  }
+  if(sub.data_sources&&sub.data_sources.length){
+    md+='## Data Sources\n\n';
+    sub.data_sources.forEach(function(d){ md+='- **'+mdEsc(d.source)+'** — '+mdEsc(d.detail)+'\n'; });
+    md+='\n';
+  }
+  if(sub.detection_queries&&sub.detection_queries.length){
+    md+='## Detection Queries\n\n';
+    sub.detection_queries.forEach(function(q){
+      md+='### '+mdEsc(q.title)+' ('+mdEsc(q.language)+')\n\n';
+      if(q.description)md+=mdEsc(q.description)+'\n\n';
+      md+='```\n'+mdEsc(q.query)+'\n```\n\n';
+    });
+  }
+  if(sub.false_positives&&sub.false_positives.length){
+    md+='## False Positive Guidance\n\n';
+    sub.false_positives.forEach(function(f){ md+='- '+mdEsc(f)+'\n'; });
+    md+='\n';
+  }
+  if(sub.response_steps&&sub.response_steps.length){
+    md+='## Response / Triage Steps\n\n';
+    sub.response_steps.forEach(function(r,i){ md+=(i+1)+'. '+mdEsc(r)+'\n'; });
+    md+='\n';
+  }
+  if(sub.mitigations&&sub.mitigations.length){
+    md+='## Mitigations\n\n';
+    sub.mitigations.forEach(function(m){ md+='- **'+mdEsc(m.id)+' '+mdEsc(m.name)+'** — '+mdEsc(m.detail)+'\n'; });
+    md+='\n';
+  }
+  if(sub.related&&sub.related.length){
+    md+='## Related / Chained Techniques\n\n';
+    sub.related.forEach(function(r){ md+='- **'+mdEsc(r.id)+' '+mdEsc(r.name)+'** — '+mdEsc(r.relation)+'\n'; });
+    md+='\n';
+  }
+  md+='---\n_Exported from TTPHUNT — h3ad-sec.github.io/TTPHUNT/#'+sub.id+'_\n';
+
+  var blob=new Blob([md],{type:'text/markdown;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download=sub.id+'-'+sub.name.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'.md';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+}
+
 var queryIdCounter=0;
 function renderSubDetail(full,sub){
   var html=crumb(full,sub.id+' '+sub.name);
@@ -847,7 +991,11 @@ function renderSubDetail(full,sub){
   html+='<div class="tt-detail-id">'+esc(sub.id)+' · '+esc(full.name)+'</div>';
   html+='<div class="tt-detail-title">'+esc(sub.name)+'</div>';
   html+='</div>';
+  html+='<div class="tt-detail-actions">';
   if(sub.mitre_url)html+='<a class="tt-mitre-link" href="'+esc(sub.mitre_url)+'" target="_blank" rel="noopener">View on attack.mitre.org ↗</a>';
+  html+='<button class="tt-export-btn" onclick="exportMarkdown(\''+esc(full.id)+'\',\''+esc(sub.id)+'\')">⬇ Markdown</button>';
+  html+='<button class="tt-export-btn" onclick="window.print()">🖶 Print / PDF</button>';
+  html+='</div>';
   html+='</div>';
   html+='<div class="tt-badge-row">';
   html+='<span class="tt-badge tactic">'+esc(sub.tactic)+' · '+esc(sub.tactic_name)+'</span>';

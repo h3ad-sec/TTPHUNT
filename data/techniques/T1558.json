@@ -198,6 +198,12 @@
           "query": "SecurityEvent\n| where EventID == 4769\n| where TicketEncryptionType == \"0x17\"\n| where ServiceName !endswith \"$\" and ServiceName != \"krbtgt\"\n| summarize RequestCount = count(), DistinctSPNs = dcount(ServiceName) by TargetUserName, bin(TimeGenerated, 10m)\n| where DistinctSPNs >= 3\n| order by DistinctSPNs desc"
         },
         {
+          "language": "XQL",
+          "title": "Kerberoasting Tool Execution (Cortex XDR)",
+          "description": "Cortex XDR process-creation equivalent, catching the common Kerberoasting tooling by command-line pattern.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_command_line contains \"kerberoast\" or action_process_image_command_line contains \"GetUserSPNs\"\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, event_timestamp"
+        },
+        {
           "language": "Sigma",
           "title": "Kerberoasting via Invoke-Kerberoast / Rubeus / GetUserSPNs",
           "description": "Flags process execution of the most common Kerberoasting tooling by command-line pattern.",
@@ -258,6 +264,12 @@
           "title": "AS-REQ Without Pre-Authentication (Possible AS-REP Roasting)",
           "description": "Flags 4768 events where Pre-Authentication Type is 0, the direct signal of a pre-auth-disabled account being queried.",
           "query": "SecurityEvent\n| where EventID == 4768\n| where PreAuthType == \"0\" or isempty(PreAuthType)\n| project TimeGenerated, TargetUserName, IpAddress, TicketEncryptionType, PreAuthType\n| order by TimeGenerated desc"
+        },
+        {
+          "language": "XQL",
+          "title": "AS-REP Roasting via Rubeus (Cortex XDR)",
+          "description": "Cortex XDR process-creation equivalent of the Rubeus asreproast detection.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_command_line contains \"asreproast\"\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, event_timestamp"
         },
         {
           "language": "Sigma",

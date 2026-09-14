@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-14",
-  "count": 2,
+  "generated": "2026-09-15",
+  "count": 3,
   "techniques": [
     {
       "id": "T1003",
@@ -33,6 +33,29 @@
         { "id": "T1558.003", "name": "Kerberoasting" },
         { "id": "T1558.004", "name": "AS-REP Roasting" },
         { "id": "T1558.005", "name": "Ccache Files" }
+      ]
+    },
+    {
+      "id": "T1059",
+      "name": "Command and Scripting Interpreter",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Windows", "Linux", "macOS", "Network Devices", "ESXi", "Containers", "IaaS", "SaaS"],
+      "file": "techniques/T1059.json",
+      "subtechniques": [
+        { "id": "T1059.001", "name": "PowerShell" },
+        { "id": "T1059.002", "name": "AppleScript" },
+        { "id": "T1059.003", "name": "Windows Command Shell" },
+        { "id": "T1059.004", "name": "Unix Shell" },
+        { "id": "T1059.005", "name": "Visual Basic" },
+        { "id": "T1059.006", "name": "Python" },
+        { "id": "T1059.007", "name": "JavaScript" },
+        { "id": "T1059.008", "name": "Network Device CLI" },
+        { "id": "T1059.009", "name": "Cloud API" },
+        { "id": "T1059.010", "name": "AutoHotkey & AutoIT" },
+        { "id": "T1059.011", "name": "Lua" },
+        { "id": "T1059.012", "name": "Hypervisor CLI" },
+        { "id": "T1059.013", "name": "Container CLI/API" }
       ]
     }
   ]

@@ -106,6 +106,12 @@
           "query": "title: LSASS Dump via comsvcs.dll MiniDump\nid: 8f2a6b1e-4c3d-4e7a-9b1f-5d6e8a3c1f90\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_img:\n    Image|endswith: '\\rundll32.exe'\n  selection_cmd:\n    CommandLine|contains|all:\n      - 'comsvcs.dll'\n      - 'MiniDump'\n  condition: all of selection_*\nfalsepositives:\n  - Extremely rare in legitimate administration; comsvcs.dll MiniDump is not a documented admin workflow\nlevel: high\ntags:\n  - attack.credential_access\n  - attack.t1003.001"
         },
         {
+          "language": "XQL",
+          "title": "LSASS Dump via comsvcs.dll MiniDump (Cortex XDR)",
+          "description": "Cortex XDR equivalent of the comsvcs.dll MiniDump LOLBin detection.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_name ~= \"rundll32\\.exe\"\n| filter action_process_image_command_line contains \"comsvcs.dll\" and action_process_image_command_line contains \"MiniDump\"\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, event_timestamp"
+        },
+        {
           "language": "Sigma",
           "title": "Mimikatz Credential Harvesting via sekurlsa",
           "description": "Detects Mimikatz sekurlsa/lsadump module usage by known command-line and OriginalFileName patterns.",
@@ -175,6 +181,12 @@
           "title": "SAM/SYSTEM/SECURITY Hive Dump via reg.exe",
           "description": "Flags reg.exe save commands targeting the three registry hives commonly exported for offline SAM cracking.",
           "query": "DeviceProcessEvents\n| where Timestamp > ago(24h)\n| where FileName =~ \"reg.exe\"\n| where ProcessCommandLine has \"save\"\n    and ProcessCommandLine has_any (\"hklm\\\\sam\", \"hklm\\\\system\", \"hklm\\\\security\")\n| project Timestamp, DeviceName, AccountName, ProcessCommandLine,\n          InitiatingProcessFileName, InitiatingProcessAccountName\n| order by Timestamp desc"
+        },
+        {
+          "language": "XQL",
+          "title": "SAM/SYSTEM/SECURITY Hive Dump via reg.exe (Cortex XDR)",
+          "description": "Cortex XDR equivalent of the reg.exe save detection.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_name ~= \"reg\\.exe\"\n| filter action_process_image_command_line contains \"save\" and (action_process_image_command_line contains \"sam\" or action_process_image_command_line contains \"system\" or action_process_image_command_line contains \"security\")\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, event_timestamp"
         },
         {
           "language": "Sigma",
@@ -249,6 +261,12 @@
           "query": "DeviceProcessEvents\n| where Timestamp > ago(24h)\n| where FileName in~ (\"ntdsutil.exe\", \"vssadmin.exe\", \"esentutl.exe\")\n| where ProcessCommandLine has_any (\"ntds\", \"create shadow\", \"ifm\")\n| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessAccountName\n| order by Timestamp desc"
         },
         {
+          "language": "XQL",
+          "title": "NTDS.dit Extraction via ntdsutil / Shadow Copy (Cortex XDR)",
+          "description": "Cortex XDR equivalent of the ntdsutil/vssadmin detection.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_name ~= \"ntdsutil\\.exe\" or action_process_image_name ~= \"vssadmin\\.exe\"\n| filter action_process_image_command_line contains \"ntds\" or action_process_image_command_line contains \"create shadow\" or action_process_image_command_line contains \"ifm\"\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, event_timestamp"
+        },
+        {
           "language": "Sigma",
           "title": "NTDS.dit Extraction via ntdsutil or Volume Shadow Copy",
           "description": "Vendor-agnostic version covering both the ntdsutil IFM path and the vssadmin shadow-copy path.",
@@ -317,6 +335,12 @@
           "query": "DeviceRegistryEvents\n| where Timestamp > ago(24h)\n| where RegistryKey has @\"SECURITY\\Policy\\Secrets\"\n| where InitiatingProcessFileName !~ \"lsass.exe\"\n| project Timestamp, DeviceName, InitiatingProcessAccountName,\n          InitiatingProcessFileName, InitiatingProcessCommandLine, RegistryKey\n| order by Timestamp desc"
         },
         {
+          "language": "XQL",
+          "title": "reg.exe Save Targeting SECURITY Hive (Cortex XDR)",
+          "description": "Cortex XDR process-creation equivalent, catching the reg.exe save path to LSA Secrets rather than the registry-read event itself.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_name ~= \"reg\\.exe\"\n| filter action_process_image_command_line contains \"save\" and action_process_image_command_line contains \"security\"\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, event_timestamp"
+        },
+        {
           "language": "Sigma",
           "title": "LSA Secrets Registry Access (Non-LSASS)",
           "description": "Same logic in Sigma form for Sysmon RegistryEvent telemetry.",
@@ -383,6 +407,12 @@
           "title": "Domain Cached Credentials (MSCache) Registry Access",
           "description": "Flags any non-LSASS process reading the cached-credential registry key.",
           "query": "DeviceRegistryEvents\n| where Timestamp > ago(24h)\n| where RegistryKey has @\"SECURITY\\Cache\"\n| where InitiatingProcessFileName !~ \"lsass.exe\"\n| project Timestamp, DeviceName, InitiatingProcessAccountName,\n          InitiatingProcessFileName, InitiatingProcessCommandLine, RegistryKey\n| order by Timestamp desc"
+        },
+        {
+          "language": "XQL",
+          "title": "LaZagne/Cachedump Process Execution (Cortex XDR)",
+          "description": "Cortex XDR process-creation equivalent, catching the common tools used to pull cached domain credentials rather than the registry-read event itself.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_name ~= \"lazagne.*\\.exe\" or action_process_image_name ~= \"cachedump.*\\.exe\"\n| fields agent_hostname, actor_effective_username, action_process_image_name, action_process_image_command_line, event_timestamp"
         },
         {
           "language": "Sigma",

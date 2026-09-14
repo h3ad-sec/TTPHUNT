@@ -1,0 +1,806 @@
+{
+  "id": "T1059",
+  "name": "Command and Scripting Interpreter",
+  "tactic": "TA0002",
+  "tactic_name": "Execution",
+  "platforms": ["Windows", "Linux", "macOS", "Network Devices", "ESXi", "Containers", "IaaS", "SaaS", "Identity Provider", "Office Suite"],
+  "mitre_url": "https://attack.mitre.org/techniques/T1059/",
+  "overview": "Adversaries abuse the command and script interpreters built into nearly every platform to execute commands, scripts, and binaries. These aren't attacker tools — they're the OS and its applications doing exactly what they were built to do, which is what makes this technique family so hard to blanket-block and so dependent on behavioral, contextual detection rather than simple allow/deny lists. The 13 sub-techniques below cover the major interpreters an adversary might reach for, from PowerShell and cmd.exe on Windows through Unix shells, Python, JavaScript, and Visual Basic, out to network device CLIs, cloud APIs, hypervisor shells, and container orchestration tooling.",
+  "prerequisite_concepts": [
+    {
+      "term": "Why this whole technique family is dual-use by design",
+      "explanation": "Every interpreter covered here — PowerShell, bash, Python, cmd.exe — is a legitimate, necessary part of the system it runs on. Nothing about launching one is inherently malicious. That means detection here can't be about the binary's existence; it has to be about intent signals: what argued it, what it did next, whether the command line is obfuscated, whether the parent process makes sense. This is the single biggest mindset shift from a technique like T1003, where the mere presence of certain artifacts (a LSASS dump file, a DCSync replication request from a non-DC) is itself a strong signal."
+    },
+    {
+      "term": "Living-off-the-land (LOLBins) and why allowlisting alone fails",
+      "explanation": "Most of these sub-techniques use binaries that are already present on the system by default — powershell.exe, cmd.exe, python (if installed), wscript.exe, osascript. An application-control policy that just blocks 'unknown' executables does nothing here, because nothing about these binaries is unknown or unsigned. This is why mitigations across this whole family lean on execution-prevention policies (Constrained Language Mode, script signing, denylisting specific interpreters where they're not operationally needed) rather than generic allowlisting."
+    },
+    {
+      "term": "In-memory script execution vs. file-based AV",
+      "explanation": "A script interpreter can execute code that never touches disk as a file — piped in via `-Command`, downloaded and `Invoke-Expression`'d directly, or run from a string in a scheduled task. Traditional file-scanning antivirus has nothing to inspect in that case. This is exactly why Windows added PowerShell Module Logging (Event ID 4103) and Script Block Logging (Event ID 4104) to the PowerShell Operational log — they capture what the interpreter actually executed, not just that it launched, closing the visibility gap file-based scanning leaves open."
+    },
+    {
+      "term": "Interpreter choice is about availability, not unique capability",
+      "explanation": "For an attacker, PowerShell, Python, and a Unix shell are largely interchangeable — pick whichever is already present and least likely to be flagged in that specific environment. A defense built around blocking one interpreter (\"we disabled PowerShell\") routinely gets sidestepped by simply switching to Python, VBScript, or JavaScript instead, which is why several sub-techniques below exist as near-equivalents to each other rather than as a strict hierarchy of sophistication."
+    },
+    {
+      "term": "Encoding and obfuscation as the near-universal tell",
+      "explanation": "Base64-encoded PowerShell (`-EncodedCommand`/`-enc`), string concatenation to break up flagged keywords, char-code-built strings in JavaScript, obfuscated VBA — this pattern repeats across nearly every interpreter covered here. It's one of the single highest-value generic signals in this whole technique family: legitimate administrative scripts are very rarely deliberately obfuscated, so a genuinely encoded or heavily obfuscated command line is disproportionately likely to be worth a look regardless of which interpreter carried it."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1059.001",
+      "name": "PowerShell",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/001/",
+      "overview": "PowerShell is a full scripting environment built into Windows with deep access to .NET, WMI, and the OS itself — exactly why it's one of the most abused execution vectors in modern intrusions. Adversaries use it for discovery, in-memory payload download-and-execute, remote command execution via Invoke-Command, and as the delivery engine for offensive frameworks like Empire and Cobalt Strike. Execution can also happen indirectly through the underlying System.Management.Automation assembly, bypassing powershell.exe entirely.",
+      "concepts": [
+        {
+          "term": "Why 4104 matters more than 4688 here",
+          "explanation": "Security 4688 (or Sysmon 1) shows that powershell.exe launched and with what initial command line — but a single `-EncodedCommand` argument can unpack into an enormous, heavily obfuscated script that 4688 never sees the contents of. PowerShell's own Script Block Logging (Event ID 4104, in the Microsoft-Windows-PowerShell/Operational log, not Security) logs the de-obfuscated code block actually executed, which is why enabling it is treated as close to mandatory for any environment that wants real PowerShell visibility."
+        },
+        {
+          "term": "Execution without powershell.exe",
+          "explanation": "PowerShell's engine lives in the System.Management.Automation .NET assembly — any .NET application, including a custom-compiled one, can host that assembly and run PowerShell code without ever spawning powershell.exe. This is exactly why process-name-based detection (\"alert if powershell.exe runs\") is necessary but not sufficient; module and script-block logging fire regardless of which process hosted the engine, which is the real reason they matter."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "APT29", "activity": "Used encoded PowerShell scripts for payload deployment." },
+        { "actor": "Sandworm Team", "activity": "Used PowerShell scripts to run a credential harvesting tool entirely in memory." },
+        { "actor": "Cobalt Strike", "activity": "Executes payloads remotely via PowerShell without writing to disk." },
+        { "actor": "Empire", "activity": "Leverages PowerShell for the majority of its client-side agent tasks." },
+        { "actor": "Emotet", "activity": "Retrieves malicious payloads and downloads tools like Mimikatz using PowerShell." }
+      ],
+      "data_sources": [
+        { "source": "PowerShell Operational log 4104", "detail": "Script Block Logging — the de-obfuscated code the interpreter actually executed, independent of how it was launched." },
+        { "source": "PowerShell Operational log 4103", "detail": "Module Logging — records pipeline execution details for loaded modules, useful for correlating cmdlet usage even without full script-block text." },
+        { "source": "Sysmon 1 / Security 4688", "detail": "Process creation for powershell.exe/pwsh.exe with -EncodedCommand, -WindowStyle Hidden, -NoProfile, or a suspiciously long/obfuscated command line." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Encoded or Hidden-Window PowerShell Execution",
+          "description": "Flags powershell.exe invocations using encoding or window-hiding flags commonly paired with malicious execution.",
+          "query": "DeviceProcessEvents\n| where Timestamp > ago(24h)\n| where FileName in~ (\"powershell.exe\", \"pwsh.exe\")\n| where ProcessCommandLine has_any (\"-enc\", \"-EncodedCommand\", \"-WindowStyle Hidden\", \"-w hidden\", \"-nop\", \"IEX\")\n| project Timestamp, DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName\n| order by Timestamp desc"
+        },
+        {
+          "language": "XQL",
+          "title": "Encoded PowerShell Execution (Cortex XDR)",
+          "description": "Cortex XDR equivalent of the encoded-command detection.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_name ~= \"powershell.exe\" or action_process_image_name ~= \"pwsh.exe\"\n| filter action_process_image_command_line contains \"-enc\" or action_process_image_command_line contains \"-EncodedCommand\" or action_process_image_command_line contains \"hidden\"\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, event_timestamp"
+        },
+        {
+          "language": "Sigma",
+          "title": "Suspicious PowerShell Encoded Command Execution",
+          "description": "Vendor-agnostic version of the encoded-command pattern.",
+          "query": "title: Suspicious PowerShell Encoded Command Execution\nid: 1f6a3c8e-9b4d-4e2a-8c7f-3d6b9a2e5c40\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_img:\n    Image|endswith:\n      - '\\powershell.exe'\n      - '\\pwsh.exe'\n  selection_cmd:\n    CommandLine|contains:\n      - '-enc'\n      - '-EncodedCommand'\n      - '-WindowStyle Hidden'\n      - '-nop'\n  condition: selection_img and selection_cmd\nfalsepositives:\n  - Legitimate admin scripts and deployment tooling that pass encoded commands for whitespace/quoting safety\nlevel: medium\ntags:\n  - attack.execution\n  - attack.t1059.001"
+        }
+      ],
+      "false_positives": [
+        "Legitimate configuration management tooling (DSC, SCCM, Intune) that passes encoded commands purely for quoting/whitespace safety, not evasion",
+        "Scheduled administrative scripts that hide their window by convention when running unattended"
+      ],
+      "response_steps": [
+        "Pull the 4104 script block for the session, not just the 4688 command line — the encoded/launch command rarely shows the real payload",
+        "Identify what the decoded script actually did: network calls, file writes, credential access, persistence",
+        "Check the parent process chain; PowerShell spawned from Office, a browser, or a scheduled task is a stronger signal than an admin's interactive console session",
+        "If the script downloaded or ran a second-stage payload, pivot the hunt to that artifact specifically"
+      ],
+      "mitigations": [
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Use application control and PowerShell Constrained Language Mode to restrict access to dangerous elements like Add-Type." },
+        { "id": "M1045", "name": "Code Signing", "detail": "Set execution policy to run only signed scripts." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict PowerShell execution to administrators; consider Just Enough Administration (JEA) for sandboxing." }
+      ],
+      "related": [
+        { "id": "T1059.005", "name": "Visual Basic", "relation": "A common delivery vector — VBA macros in phishing attachments frequently launch a PowerShell stage rather than acting directly." },
+        { "id": "T1003.001", "name": "LSASS Memory", "relation": "sekurlsa::logonPasswords and similar Mimikatz modules are routinely loaded and executed reflectively through PowerShell rather than as a standalone binary." }
+      ]
+    },
+    {
+      "id": "T1059.002",
+      "name": "AppleScript",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/002/",
+      "overview": "AppleScript controls macOS applications and OS components through AppleEvents — inter-application messages that can locate windows, send keystrokes, and drive nearly any open application locally or remotely. Adversaries run it via `osascript` from the command line, embed it in Mail rules, Calendar alarms, and Automator workflows, or call it natively through NSAppleScript/OSAScript APIs inside a compiled Mach-O binary, skipping osascript entirely.",
+      "concepts": [
+        {
+          "term": "Why AppleEvents make it more than 'just a scripting language'",
+          "explanation": "AppleScript's power comes from AppleEvents — a real inter-process messaging system, not a sandboxed macro language. A script can tell another running application to open a document, click a button, or hand over data, which is why it's been used for everything from injecting JavaScript into a browser (Bundlore) to reading Keychain passwords via a `do shell script` call embedded in an AppleScript."
+        },
+        {
+          "term": "The native-API path that skips osascript",
+          "explanation": "Since macOS 10.10, a compiled Mach-O binary can call NSAppleScript or the OSAScript API directly, executing AppleScript logic without ever invoking the osascript command-line tool. Detections that only watch for osascript process creation miss this path entirely — it's why MITRE's own detection strategy for this technique explicitly separates 'via osascript' from 'via native API' as two different analytics."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "GlassWorm", "activity": "Uses AppleScript with 'set keychainPassword to do shell script' to retrieve macOS Keychain passwords." },
+        { "actor": "ThiefQuest", "activity": "Uses osascript -e for persistence establishment via Launch Agent and Launch Daemon." },
+        { "actor": "macOS.OSAMiner", "activity": "Calls itself via osascript and do shell script from within Launch Agent .plist files." },
+        { "actor": "Dok", "activity": "Uses AppleScript to create a login item for persistence." },
+        { "actor": "Bundlore", "activity": "Uses AppleScript to inject malicious JavaScript into a browser." }
+      ],
+      "data_sources": [
+        { "source": "Unified Logs (macOS)", "detail": "osascript process execution with script path or -e inline script arguments; correlate with the parent process that launched it." },
+        { "source": "EDR process telemetry", "detail": "NSAppleScript/OSAScript API calls from within a Mach-O binary, which won't show up as a separate osascript process at all." },
+        { "source": "LaunchAgent/LaunchDaemon .plist creation", "detail": "New persistence entries whose ProgramArguments invoke osascript or a shell script wrapping AppleScript, a common combination for AppleScript-based persistence." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Suspicious osascript Execution with Shell Command",
+          "description": "Flags osascript invocations that themselves shell out — a common pattern for credential theft or persistence via AppleScript.",
+          "query": "title: Suspicious osascript Shelling Out\nid: 8c4e1a6d-3f9b-4c2e-9a7d-6b3f8c1e4d90\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: macos\ndetection:\n  selection_img:\n    Image|endswith: '/osascript'\n  selection_cmd:\n    CommandLine|contains:\n      - 'do shell script'\n      - 'keychain'\n  condition: selection_img and selection_cmd\nfalsepositives:\n  - Legitimate Automator workflows and admin scripts that call do shell script as part of normal automation\nlevel: medium\ntags:\n  - attack.execution\n  - attack.t1059.002"
+        }
+      ],
+      "false_positives": [
+        "IT automation and MDM tooling that legitimately uses osascript with do shell script for fleet management",
+        "Accessibility and workflow automation apps (Automator, Keyboard Maestro) that drive other applications via AppleEvents as their core function"
+      ],
+      "response_steps": [
+        "Extract the full script content (from the process command line or the .plist ProgramArguments) rather than just the fact that osascript ran",
+        "Check what application the script targeted — Keychain access, browser injection, and Mail/Calendar automation each point to a different objective",
+        "Look for an associated LaunchAgent/LaunchDaemon if the script's purpose looks like persistence rather than one-off execution",
+        "If Keychain access is involved, treat any credentials in that Keychain as potentially exposed"
+      ],
+      "mitigations": [
+        { "id": "M1045", "name": "Code Signing", "detail": "Require trusted developer ID signatures before AppleScript execution, subjecting code to Gatekeeper review." },
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Deploy application control mechanisms where appropriate." }
+      ],
+      "related": [
+        { "id": "T1059.007", "name": "JavaScript", "relation": "JavaScript for Automation (JXA) is functionally a JavaScript-syntax alternative to AppleScript on the same OSA/AppleEvents foundation." }
+      ]
+    },
+    {
+      "id": "T1059.003",
+      "name": "Windows Command Shell",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/003/",
+      "overview": "cmd.exe is the baseline command-line interface on every Windows system, and .bat/.cmd batch files let an adversary sequence conditional, looping, multi-step execution with nothing more exotic than what ships in the box. It's routinely the outermost layer of an execution chain — invoked by PsExec, a C2 beacon, or a macro to launch the actual payload — rather than the final payload itself.",
+      "concepts": [
+        {
+          "term": "Why it's usually a wrapper, not the payload",
+          "explanation": "cmd.exe is rarely where the interesting logic lives — it's the thing that launches PowerShell, calls rundll32, or pipes a downloaded payload into the next stage. This is exactly why cmd.exe process-creation events are most valuable for their command-line arguments and immediate child processes, not in isolation: 'cmd.exe ran' tells you almost nothing, 'cmd.exe /c powershell -enc ...' tells you a great deal."
+        },
+        {
+          "term": "Batch files as a lightweight scripting layer",
+          "explanation": ".bat/.cmd files support conditionals (IF), loops (FOR), and variables — enough to build a real multi-step payload or lateral-movement script without needing PowerShell or a compiled binary at all. Their simplicity is the point: batch scripting is less likely to trigger the more sophisticated logging (like PowerShell's script-block logging) built for richer interpreters, which is part of why it still shows up across ransomware operators and APT toolkits alike."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "2025 Poland Wiper Attacks", "activity": "Used PsExec to run cmd.exe commands across multiple victim machines." },
+        { "actor": "Conti ransomware", "activity": "Used command-line options via cmd.exe to control file scanning and encryption behavior." },
+        { "actor": "QakBot", "activity": "Leveraged cmd.exe for launching payloads and executing C2 commands." },
+        { "actor": "Lazarus Group", "activity": "Utilized cmd.exe across multiple destructive operations." },
+        { "actor": "Emotet", "activity": "Executed PowerShell scripts via cmd.exe as an intermediary layer." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 1 / Security 4688", "detail": "cmd.exe process creation with its full command line, including any /c-invoked child command." },
+        { "source": "Sysmon 11 (FileCreate)", "detail": "Batch (.bat/.cmd) file creation in unusual locations (temp directories, user-writable paths) shortly before execution." },
+        { "source": "Process tree / parent-child lineage", "detail": "cmd.exe spawned from Office applications, browsers, or a script host (wscript/mshta) rather than from explorer.exe or a legitimate admin console session." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "cmd.exe Spawned from Office or Script Host",
+          "description": "Flags cmd.exe launched from a process lineage inconsistent with normal interactive use — a strong signal for a macro or script-driven execution chain.",
+          "query": "DeviceProcessEvents\n| where Timestamp > ago(24h)\n| where FileName =~ \"cmd.exe\"\n| where InitiatingProcessFileName in~ (\"winword.exe\", \"excel.exe\", \"powerpnt.exe\", \"wscript.exe\", \"cscript.exe\", \"mshta.exe\")\n| project Timestamp, DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine\n| order by Timestamp desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "cmd.exe Spawned from Office Application",
+          "description": "Vendor-agnostic version of the Office-to-cmd.exe lineage check.",
+          "query": "title: cmd.exe Spawned from Office Application\nid: 5d8b2e4a-7c1f-4a9e-8b3d-2f6c9a4e7b10\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_img:\n    Image|endswith: '\\cmd.exe'\n  selection_parent:\n    ParentImage|endswith:\n      - '\\winword.exe'\n      - '\\excel.exe'\n      - '\\powerpnt.exe'\n  condition: selection_img and selection_parent\nfalsepositives:\n  - Legitimate macro-driven business workflows that intentionally shell out (rare, but exists in some legacy environments)\nlevel: high\ntags:\n  - attack.execution\n  - attack.t1059.003"
+        }
+      ],
+      "false_positives": [
+        "Legacy line-of-business macros that intentionally call cmd.exe as part of a documented, approved workflow",
+        "Legitimate deployment/patch-management tooling that wraps its actions in batch scripts and cmd.exe /c calls"
+      ],
+      "response_steps": [
+        "Read the full command line, not just the fact that cmd.exe ran — the /c argument usually reveals the actual intent",
+        "Trace the immediate child processes cmd.exe spawned to find the real payload",
+        "Check for any .bat/.cmd files dropped to disk and pull their full contents",
+        "Correlate against the parent process to determine the initial access vector (macro, script host, remote execution tool)"
+      ],
+      "mitigations": [
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Application control to restrict which processes can launch cmd.exe or execute batch scripts." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict who can execute administrative batch scripts and remote command execution tooling." }
+      ],
+      "related": [
+        { "id": "T1059.001", "name": "PowerShell", "relation": "The most common next hop — cmd.exe is frequently just the launcher for a PowerShell-based payload." }
+      ]
+    },
+    {
+      "id": "T1059.004",
+      "name": "Unix Shell",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Linux", "macOS", "ESXi", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/004/",
+      "overview": "sh, bash, zsh, and stripped-down shells like BusyBox are the Linux/macOS/ESXi equivalent of cmd.exe — the default way anything gets executed on these platforms. Adversaries reach interactive shells over C2 channels or SSH, drop multi-command shell scripts for installers and persistence, and rely on BusyBox specifically on embedded devices, routers, and minimal container images where a full shell isn't even present.",
+      "concepts": [
+        {
+          "term": "Why it's the default, not an escalation",
+          "explanation": "Unlike Windows, where PowerShell/cmd.exe represent one option among several, a Unix shell is effectively unavoidable — cron, init scripts, package installers, and nearly every piece of system tooling itself runs through one. That ubiquity is exactly why 'a shell executed' is such a weak signal on its own; the entire practical detection burden falls on context: who invoked it, from where, and what it did."
+        },
+        {
+          "term": "Why BusyBox specifically shows up on network/embedded devices",
+          "explanation": "BusyBox packages dozens of standard Unix utilities (sh, ls, grep, wget) into a single small binary, which is why it's the default userland on routers, IoT devices, and minimal container base images that can't afford a full GNU toolchain. When malware targets embedded network gear (as with several router-botnet campaigns), a BusyBox shell is very often the only shell available to abuse — which is why detection strategies for this sub-technique explicitly call out rare BusyBox/Ash invocations on network appliances as a distinct signal from ordinary bash usage on a server."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "TeamTNT", "activity": "Used shell scripts for execution across compromised cloud environments." },
+        { "actor": "UNC3886", "activity": "Deployed bash scripts to install malicious vSphere Installation Bundles (VIBs) on ESXi systems." },
+        { "actor": "Scattered Spider", "activity": "Employed command shells to upload and install the Teleport remote access tool on vCenter appliances." },
+        { "actor": "Rocke", "activity": "Executed shell scripts to establish persistence and run cryptocurrency-mining malware." },
+        { "actor": "Kinsing", "activity": "Executed Unix shell scripts across victim environments as part of cryptomining deployment." }
+      ],
+      "data_sources": [
+        { "source": "auditd", "detail": "EXECVE records for sh/bash/zsh/dash, particularly from a remote-session parent (sshd) or a non-interactive context (cron, a web server process)." },
+        { "source": "Shell history / process telemetry", "detail": "Shell script file creation in world-writable paths (/tmp, /dev/shm) immediately followed by execution." },
+        { "source": "ESXi shell.log", "detail": "Every command entered in the ESXi Shell or console is logged here starting with ESXi 5.1 — the primary source for auditing esxcli/shell abuse on hypervisor hosts." }
+      ],
+      "detection_queries": [
+        {
+          "language": "auditd",
+          "title": "Shell Spawned from Web Server or Non-Interactive Context",
+          "description": "Base auditd rule flagging shell execution from processes that shouldn't normally spawn one, a common web-shell/RCE pattern.",
+          "query": "auditctl -a always,exit -F arch=b64 -S execve -F path=/bin/bash -F key=shell_exec\nauditctl -a always,exit -F arch=b64 -S execve -F path=/bin/sh -F key=shell_exec"
+        },
+        {
+          "language": "Sigma",
+          "title": "Shell Execution from Web Server Process",
+          "description": "Flags a shell spawned as a child of a common web server binary — the classic web-shell-to-RCE pattern.",
+          "query": "title: Shell Spawned from Web Server Process\nid: 3e9c7b1a-5f2d-4c8e-9a6b-1d4f7c2e9b50\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: linux\ndetection:\n  selection_img:\n    Image|endswith:\n      - '/bin/sh'\n      - '/bin/bash'\n  selection_parent:\n    ParentImage|contains:\n      - 'nginx'\n      - 'apache'\n      - 'httpd'\n      - 'php-fpm'\n  condition: selection_img and selection_parent\nfalsepositives:\n  - Legitimate web application features that intentionally shell out (rare and worth eliminating, but exists in some legacy stacks)\nlevel: high\ntags:\n  - attack.execution\n  - attack.t1059.004"
+        }
+      ],
+      "false_positives": [
+        "Legitimate CI/CD pipelines and deployment scripts that shell out extensively as their normal function",
+        "Container entrypoint scripts and init systems that are shell-based by design"
+      ],
+      "response_steps": [
+        "Identify the parent process — a shell from sshd is routine, a shell from a web server or database process is not",
+        "Pull auditd EXECVE records for the full command history of that shell session",
+        "Check for dropped scripts in /tmp or /dev/shm and any outbound network connections the shell initiated",
+        "On ESXi specifically, cross-reference shell.log against auth.log to confirm which authenticated session issued the commands"
+      ],
+      "mitigations": [
+        { "id": "M1038", "name": "Execution Prevention", "detail": "On ESXi, the execInstalledOnly feature prevents binaries from running unless packaged and signed as part of a vSphere Installation Bundle." }
+      ],
+      "related": [
+        { "id": "T1003.007", "name": "Proc Filesystem", "relation": "Once a shell is obtained, /proc-based credential scraping is a common immediate next step on the same host." },
+        { "id": "T1059.012", "name": "Hypervisor CLI", "relation": "On ESXi specifically, shell access and esxcli/vim-cmd abuse are frequently part of the same intrusion." }
+      ]
+    },
+    {
+      "id": "T1059.005",
+      "name": "Visual Basic",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/005/",
+      "overview": "VBA (built into Microsoft Office), VBScript (a default Windows scripting language, also usable inside HTA files), and VB.NET are all Visual Basic derivatives adversaries abuse for execution. The most common pattern by far is a VBA macro embedded in a phishing attachment — sometimes paired with a Mark-of-the-Web bypass so Office doesn't flag the document as internet-sourced — that then downloads and launches a further-stage payload.",
+      "concepts": [
+        {
+          "term": "Why the phishing-macro pattern persists despite mitigations",
+          "explanation": "Since Office version 2203, Microsoft blocks VBA macros in files carrying the Mark-of-the-Web attribute (i.e., downloaded from the internet) by default. That single change broke the most common macro-phishing pattern overnight — which is exactly why so much of the current activity in this space is specifically about Mark-of-the-Web bypass techniques (container formats like ISO/IMG that don't propagate MOTW, or social-engineering the user into manually removing the block) rather than the macro itself getting more sophisticated."
+        },
+        {
+          "term": "VBScript's second life in HTA files",
+          "explanation": "VBScript can substitute for JavaScript inside HTML Application (.hta) files, which Windows will execute directly via mshta.exe — a signed Microsoft binary — rather than requiring a browser at all. That combination (an HTA delivered via phishing, executed by a trusted signed binary, running VBScript that downloads a real payload) is a recurring pattern precisely because mshta.exe rarely appears on anyone's blocklist despite being a fully capable script host."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Emotet", "activity": "Distributed Word documents containing embedded macros that invoked scripts to download additional payloads." },
+        { "actor": "Sandworm Team", "activity": "Created VBScripts running SSH servers and installed macro-based droppers during the 2015 Ukraine Electric Power Attack." },
+        { "actor": "MuddyWater", "activity": "Deployed VBScript files executing POWERSTATS payloads and used Office macros in espionage operations." },
+        { "actor": "Lazarus Group", "activity": "Embedded VBA macros within Word documents to extract and execute Base64-encoded DLL implants." },
+        { "actor": "QakBot", "activity": "Leveraged VBScript to download and execute malicious files, spreading through VBS-based campaigns." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 1 / Security 4688", "detail": "wscript.exe/cscript.exe/mshta.exe process creation with a script path argument, especially spawned from an Office application." },
+        { "source": "Office macro telemetry / AMSI", "detail": "VBA macro execution events and AMSI-scanned macro content, which can surface de-obfuscated macro logic even when the visible code is heavily obscured." },
+        { "source": "Sysmon 11 (FileCreate)", "detail": "Creation of .vbs/.hta files in temp or user-writable directories, often immediately preceding execution." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Script Host Spawned from Office Application",
+          "description": "Flags wscript.exe, cscript.exe, or mshta.exe launched by an Office application — the core macro-to-script-host handoff.",
+          "query": "DeviceProcessEvents\n| where Timestamp > ago(24h)\n| where FileName in~ (\"wscript.exe\", \"cscript.exe\", \"mshta.exe\")\n| where InitiatingProcessFileName in~ (\"winword.exe\", \"excel.exe\", \"powerpnt.exe\", \"outlook.exe\")\n| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName\n| order by Timestamp desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "Script Host Spawned from Office Application",
+          "description": "Vendor-agnostic version of the macro-to-script-host detection.",
+          "query": "title: Script Host Spawned from Office Application\nid: 6f2a8c4e-9b3d-4a7f-8c1e-5d9b2a6f4c30\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_img:\n    Image|endswith:\n      - '\\wscript.exe'\n      - '\\cscript.exe'\n      - '\\mshta.exe'\n  selection_parent:\n    ParentImage|endswith:\n      - '\\winword.exe'\n      - '\\excel.exe'\n      - '\\powerpnt.exe'\n  condition: selection_img and selection_parent\nfalsepositives:\n  - Legacy line-of-business macros with a documented, approved need to launch external scripts\nlevel: high\ntags:\n  - attack.execution\n  - attack.t1059.005"
+        }
+      ],
+      "false_positives": [
+        "Legacy enterprise macros that legitimately automate external scripts as part of an approved business process",
+        "Some helpdesk/deployment tooling still uses HTA-based installers for internal software distribution"
+      ],
+      "response_steps": [
+        "Recover the phishing attachment and extract the macro source (or the HTA's VBScript content) for analysis",
+        "Identify what the macro downloaded or executed next — the macro itself is almost always just the delivery stage",
+        "Check whether a Mark-of-the-Web bypass container format (ISO, IMG, disk image) was used as the delivery mechanism",
+        "If the macro succeeded, treat the host as compromised from the point of macro execution, not just from the later-stage payload"
+      ],
+      "mitigations": [
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Office blocks VBA macros from internet-sourced (Mark-of-the-Web) files by default since Version 2203." },
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Enable Attack Surface Reduction rules preventing VB scripts from executing downloaded content." },
+        { "id": "M1049", "name": "Antivirus/Antimalware", "detail": "Automatically quarantine suspicious macro-bearing documents." }
+      ],
+      "related": [
+        { "id": "T1059.001", "name": "PowerShell", "relation": "The near-universal second stage — a VBA macro or VBScript almost always exists just to launch a PowerShell payload." },
+        { "id": "T1059.007", "name": "JavaScript", "relation": "JScript is Microsoft's JavaScript-syntax sibling to VBScript, capable of the exact same HTA/mshta.exe delivery pattern." }
+      ]
+    },
+    {
+      "id": "T1059.006",
+      "name": "Python",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/006/",
+      "overview": "Python's cross-platform reach and deep standard library make it a favorite for custom backdoors and post-exploitation tooling — whole malware families (Machete, InvisibleFerret, SILENTTRINITY) are written in it outright, while other actors just use it as a scripting layer to glue together file operations, network calls, and system interaction. It runs interactively, as a .py script, or compiled to a standalone executable (py2exe, PyInstaller), which lets an attacker ship a working Python payload to a host that never had Python installed at all.",
+      "concepts": [
+        {
+          "term": "Why compiled Python payloads dodge the obvious signal",
+          "explanation": "Tools like py2exe and PyInstaller bundle a Python interpreter and all required libraries into a single standalone binary. That means 'no python.exe on this host' is not a safe assumption once such a binary is present — the malware carries its own interpreter. Detection has to look at the compiled binary's behavior (network calls, file access patterns, embedded Python bytecode signatures) rather than relying on the presence of an installed Python runtime."
+        },
+        {
+          "term": "Why it crosses ESXi and Linux equally well",
+          "explanation": "Python is commonly pre-installed or easily reachable on ESXi hosts and most Linux distributions, which is exactly why UNC3886 used Python scripts to enumerate ESXi hosts and guest VMs directly — no additional tooling had to be dropped. The same script logic, largely unmodified, works across ESXi, Linux, and Windows, which is part of what makes Python-based tooling attractive for actors operating across mixed environments."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "UNC3886", "activity": "Executed Python scripts enumerating ESXi hosts and guest VMs." },
+        { "actor": "Earth Lusca", "activity": "Created Python scripts for port scanning and reverse shells." },
+        { "actor": "Machete", "activity": "Main backdoor written entirely in Python, deployed as compiled scripts." },
+        { "actor": "Turla", "activity": "Deployed IronPython scripts via IronNetInjector for payload delivery." },
+        { "actor": "Cinnamon Tempest", "activity": "Customized Impacket's wmiexec.py module with renamed output files to evade signature detection." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 1 / Security 4688", "detail": "python.exe/py.exe process creation with unusual parent lineage (Office macros, LOLBAS) or from a non-standard directory." },
+        { "source": "auditd", "detail": "EXECVE records for python/python3 from cron jobs, web-facing processes, or unexpected user contexts on Linux/ESXi." },
+        { "source": "EDR file/network telemetry", "detail": "A compiled, PyInstaller/py2exe-bundled binary exhibiting Python-runtime behavior (bundled DLLs, embedded bytecode) despite no system Python installation." }
+      ],
+      "detection_queries": [
+        {
+          "language": "auditd",
+          "title": "Python Execution from Cron or Web-Facing Process",
+          "description": "Flags python/python3 execution from contexts inconsistent with normal interactive development use.",
+          "query": "auditctl -a always,exit -F arch=b64 -S execve -F path=/usr/bin/python3 -F key=python_exec\nauditctl -a always,exit -F arch=b64 -S execve -F path=/usr/bin/python -F key=python_exec"
+        },
+        {
+          "language": "XQL",
+          "title": "Python Interpreter Spawned by Office or LOLBAS (Cortex XDR)",
+          "description": "Flags python.exe launched from an Office application or other LOLBAS parent on Windows.",
+          "query": "dataset = xdr_data\n| filter event_type = ENUM.PROCESS and event_sub_type = ENUM.PROCESS_START\n| filter action_process_image_name ~= \"python\\.exe\" or action_process_image_name ~= \"py\\.exe\"\n| filter causality_actor_process_image_name ~= \"winword\\.exe\" or causality_actor_process_image_name ~= \"excel\\.exe\" or causality_actor_process_image_name ~= \"mshta\\.exe\"\n| fields agent_hostname, actor_effective_username, action_process_image_command_line, causality_actor_process_image_name, event_timestamp"
+        }
+      ],
+      "false_positives": [
+        "Data science, DevOps, and automation workflows that legitimately run Python from cron or as a service on Linux/ESXi hosts",
+        "Legitimate Python-based endpoint agents and management tooling"
+      ],
+      "response_steps": [
+        "Identify whether Python was already installed on the host or arrived as a compiled/bundled payload",
+        "Pull the script source (or decompile the bundled bytecode if compiled) to understand actual functionality",
+        "Check network connections and file access the interpreter made during execution",
+        "If cron-based, review the crontab entry for persistence and how long it's been active"
+      ],
+      "mitigations": [
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Denylist Python where it's not operationally necessary." },
+        { "id": "M1047", "name": "Audit", "detail": "Inventory systems for unauthorized Python installations." },
+        { "id": "M1033", "name": "Limit Software Installation", "detail": "Prevent users from installing Python in environments that don't require it." }
+      ],
+      "related": [
+        { "id": "T1059.004", "name": "Unix Shell", "relation": "Python is frequently launched from within a shell session already obtained, as a more capable follow-on scripting layer." }
+      ]
+    },
+    {
+      "id": "T1059.007",
+      "name": "JavaScript",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/007/",
+      "overview": "JavaScript shows up in three distinct attacker-relevant forms: plain JS (runnable outside a browser via Node.js), JScript (Microsoft's Windows implementation, usable in HTA files and via COM), and JXA (JavaScript for Automation, macOS's JavaScript-syntax alternative to AppleScript). Adversaries host malicious JS for drive-by compromise, embed it in HTA/WSH-delivered payloads on Windows, or use JXA to drive macOS applications the same way AppleScript does.",
+      "concepts": [
+        {
+          "term": "Three JavaScript, one abuse pattern",
+          "explanation": "JS, JScript, and JXA are different runtimes serving different platforms, but the attacker pattern is nearly identical across all three: deliver a script (via a web page, an HTA file, or an osascript call), let the host's built-in engine execute it, and use that execution to download or directly run the real payload. Treating these as three separate techniques to defend against misses that they're the same trick wearing different platform clothing."
+        },
+        {
+          "term": "Why WSH (wscript/cscript) matters as much as the browser",
+          "explanation": "Outside the browser sandbox, Windows Script Host (wscript.exe, cscript.exe) will happily execute a standalone .js file with full access to COM objects and the filesystem — no browser sandbox restrictions apply at all. That's a very different risk profile from JavaScript running inside a browser tab, and it's why HTA/WSH-delivered JavaScript is treated as a first-class execution vector in its own right, not just 'the same as a malicious webpage.'"
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "SocGholish", "activity": "Payload is executed entirely as JavaScript, typically via a fake browser-update lure." },
+        { "actor": "Mustang Panda", "activity": "Executed a JavaScript payload utilizing wscript.exe on the endpoint." },
+        { "actor": "Astaroth", "activity": "Uses JavaScript to perform its core functionalities." },
+        { "actor": "FIN6", "activity": "Employed JavaScript to steal payment card data from e-commerce sites." },
+        { "actor": "Gootloader", "activity": "Executes a JavaScript file for initial infection." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 1 / Security 4688", "detail": "wscript.exe/cscript.exe/mshta.exe execution with a .js file argument, or Node.js process creation in unexpected contexts." },
+        { "source": "Browser telemetry", "detail": "Drive-by JavaScript execution from a compromised or malicious webpage, typically preceding a download." },
+        { "source": "macOS Unified Logs", "detail": "osascript execution using JavaScript language mode (-l JavaScript) for JXA-based automation abuse." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Suspicious .js Execution via Windows Script Host",
+          "description": "Flags wscript.exe/cscript.exe executing a standalone .js file, the WSH-based delivery pattern outside the browser sandbox.",
+          "query": "title: Suspicious JavaScript Execution via WSH\nid: 4a7c9e2f-6b3d-4c8a-9e1f-7d3b6a9c2f50\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_img:\n    Image|endswith:\n      - '\\wscript.exe'\n      - '\\cscript.exe'\n  selection_ext:\n    CommandLine|contains: '.js'\n  condition: selection_img and selection_ext\nfalsepositives:\n  - Legitimate legacy WSH-based automation scripts in some enterprise environments\nlevel: medium\ntags:\n  - attack.execution\n  - attack.t1059.007"
+        }
+      ],
+      "false_positives": [
+        "Legitimate WSH-based logon scripts and automation tooling still in use in some enterprises",
+        "Development/testing use of Node.js outside a browser context"
+      ],
+      "response_steps": [
+        "Recover the .js file content — WSH-delivered scripts are usually the initial-access stage, not the final payload",
+        "Identify the delivery vector: drive-by webpage, phishing attachment, or a dropped standalone file",
+        "Trace what the script downloaded or executed next",
+        "On macOS, check whether JXA was used to drive a specific application (browser, Keychain Access) for a hint at the objective"
+      ],
+      "mitigations": [
+        { "id": "M1040", "name": "Behavior Prevention on Endpoint", "detail": "Enable Attack Surface Reduction rules to prevent JavaScript from executing potentially malicious downloaded content." },
+        { "id": "M1021", "name": "Restrict Web-Based Content", "detail": "Script-blocking browser extensions and ad-blockers help prevent drive-by JavaScript/HTA execution." },
+        { "id": "M1042", "name": "Disable or Remove Feature or Program", "detail": "Turn off or restrict access to unneeded scripting components (WSH) where not operationally required." }
+      ],
+      "related": [
+        { "id": "T1059.002", "name": "AppleScript", "relation": "JXA is a JavaScript-syntax alternative to AppleScript on the same underlying OSA/AppleEvents automation layer." },
+        { "id": "T1059.005", "name": "Visual Basic", "relation": "JScript is functionally the JavaScript-syntax sibling to VBScript, capable of the same HTA-based delivery." }
+      ]
+    },
+    {
+      "id": "T1059.008",
+      "name": "Network Device CLI",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/008/",
+      "overview": "Routers, switches, and firewalls run their own command-line administration interface (Cisco IOS, Juniper Junos, FortiOS, and similar), reachable via console, telnet, or SSH. An adversary with access to that CLI can redirect traffic, alter or disable logging, modify boot configuration to load malicious firmware, or simply use the device's own scripting capability to automate changes across many devices at once.",
+      "concepts": [
+        {
+          "term": "Why network device compromise is disproportionately quiet",
+          "explanation": "Unlike a Windows or Linux host, a compromised network device usually has no EDR agent running on it at all — visibility depends entirely on whatever logging the device itself is configured to send off-box (syslog to a SIEM) plus AAA/TACACS+ authentication records. An attacker who also disables logging or redirects it as part of their CLI access can operate with very little forensic trace left on the device itself, which is why 'no logging' or 'terminal monitor' -type commands are themselves treated as a high-value detection signal."
+        },
+        {
+          "term": "Why permission tiers matter more here than on general-purpose OSes",
+          "explanation": "Network operating systems enforce their own command-level permission tiers (e.g., Cisco's privilege levels 0-15) independent of general OS user accounts. TACACS+/AAA is the mechanism that actually ties specific commands to specific authenticated identities and enforces who can run 'config replace' or view running-config — without it, device-level logins are often shared or poorly individually attributable, which is exactly why AAA/TACACS+ is the leading mitigation across this sub-technique rather than any host-based control."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "2025 Poland Wiper Attacks", "activity": "Adversaries leveraged the native CLI of the targeted FortiGate device." },
+        { "actor": "UNC3886 (RedPenguin)", "activity": "Accessed Junos OS CLI on targeted network devices during the campaign." },
+        { "actor": "Line Dancer", "activity": "Can execute native commands in networking device command-line interfaces." },
+        { "actor": "PHASEJAM", "activity": "Utilized native commands on compromised network appliances to execute code." }
+      ],
+      "data_sources": [
+        { "source": "AAA/TACACS+ logs", "detail": "Command-level authorization and audit trail tying specific CLI commands to authenticated identities — the primary data source for this entire sub-technique." },
+        { "source": "Syslog (device-forwarded)", "detail": "Configuration changes, privilege escalation, and high-risk commands (config replace, terminal monitor, no logging) forwarded off-device before an attacker can tamper with local logs." },
+        { "source": "Remote access session logs", "detail": "SSH/Telnet session establishment from unexpected source IPs or at unusual hours, especially against management-plane interfaces." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "High-Risk Network Device CLI Command",
+          "description": "Flags high-risk configuration or logging-disable commands captured via syslog/AAA forwarding from network devices.",
+          "query": "title: High-Risk Network Device CLI Command\nid: 2f6a9c4e-8b1d-4a7f-9c3e-6d2b8a4f9c60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: network\n  product: cisco\ndetection:\n  selection:\n    command|contains:\n      - 'no logging'\n      - 'config replace'\n      - 'terminal monitor'\n      - 'archive config'\n  condition: selection\nfalsepositives:\n  - Legitimate network engineers performing approved maintenance-window configuration changes\nlevel: high\ntags:\n  - attack.execution\n  - attack.t1059.008"
+        }
+      ],
+      "false_positives": [
+        "Legitimate network engineering staff performing scheduled maintenance-window configuration changes",
+        "Automated network configuration management tooling (Ansible, Netmiko-based scripts) applying approved changes"
+      ],
+      "response_steps": [
+        "Confirm the source IP/session against your known engineering team and approved maintenance windows",
+        "Pull the full command history for that session from TACACS+/AAA logs",
+        "Check current running-config against the last known-good backup for unauthorized changes",
+        "If logging was disabled at any point, treat that gap as a blind spot and widen the investigation window accordingly"
+      ],
+      "mitigations": [
+        { "id": "M1038", "name": "Execution Prevention", "detail": "TACACS+ restricts administrator command access through authentication and authorization configuration." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "AAA systems limit administrative actions and provide an audit trail; TACACS+ controls exactly which commands are permitted." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Implement least-privilege access and individual (not shared) device logins." }
+      ],
+      "related": [
+        { "id": "T1059.011", "name": "Lua", "relation": "Some network device platforms expose Lua as a scripting layer on top of the base CLI, extending automation beyond the standard command set." }
+      ]
+    },
+    {
+      "id": "T1059.009",
+      "name": "Cloud API",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["IaaS", "SaaS", "Identity Provider", "Office Suite"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/009/",
+      "overview": "Cloud platforms expose their entire compute, storage, IAM, and networking surface through an API — reachable via a CLI (AWS CLI, az, gcloud), a browser-based cloud shell, PowerShell modules, or an SDK. Once an adversary has valid credentials (an access token, a session cookie, or a compromised service principal), that API becomes a complete administrative interface with no need to touch a single VM directly.",
+      "concepts": [
+        {
+          "term": "Why this collapses 'execution' and 'administration' into one thing",
+          "explanation": "On a traditional host, executing code and administering the system are different activities requiring different access. In the cloud, calling the API to create a storage bucket, spin up a VM, or add an IAM policy binding IS execution — there's no separate binary being run on a target machine. That's why cloud API abuse detection lives almost entirely in audit logs (CloudTrail, Azure AD sign-in/audit logs, GCP Cloud Audit Logs) rather than process telemetry — there frequently is no process to instrument on the defender's side at all."
+        },
+        {
+          "term": "Why credential theft is the real precondition, not a coding trick",
+          "explanation": "Every example of this sub-technique — Pacu, TruffleHog, Storm-0501's cloud CLI usage — depends entirely on already holding valid API credentials. There's no exploit being chained here; it's stolen access tokens, leaked keys, or a compromised identity being pointed at a fully-documented, intended-to-be-powerful API. This is why the mitigations lean so heavily on IAM/RBAC scoping and audit trails rather than anything resembling traditional execution prevention."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "APT29", "activity": "Leveraged the Microsoft Graph API to perform actions across Azure and M365 environments, including via AADInternals PowerShell modules." },
+        { "actor": "ShinyHunters", "activity": "Used AWS CLI for API calls including ListBuckets, CreateBucket, and DeleteBucket." },
+        { "actor": "Storm-0501", "activity": "Deployed cloud CLI tools to execute commands and exfiltrate data." },
+        { "actor": "TeamTNT", "activity": "Employed AWS CLI to enumerate cloud environments using compromised credentials." },
+        { "actor": "Pacu", "activity": "AWS exploitation framework that leverages the AWS CLI/SDK for its operational activities." }
+      ],
+      "data_sources": [
+        { "source": "AWS CloudTrail / Azure AD Audit + Sign-in Logs / GCP Cloud Audit Logs", "detail": "The authoritative record of every API call, including which identity, from what IP, and what action was taken — the primary data source for this entire sub-technique." },
+        { "source": "M365 Unified Audit Log", "detail": "Microsoft Graph API calls across Azure AD and M365 services, relevant when the abused identity is a hybrid or cloud-only account." },
+        { "source": "IAM/service-account activity", "detail": "API calls from a service account or role outside its normal usage pattern (new source IP, new action types, unusual time of day)." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Anomalous AWS CLI Activity from a Compromised Identity",
+          "description": "Sentinel-style query (against ingested CloudTrail logs) flagging a burst of enumeration/destructive S3 API calls from one identity in a short window.",
+          "query": "AWSCloudTrail\n| where TimeGenerated > ago(24h)\n| where EventName in (\"ListBuckets\", \"CreateBucket\", \"DeleteBucket\", \"PutBucketPolicy\")\n| summarize CallCount = count(), Actions = make_set(EventName) by UserIdentityArn, SourceIpAddress, bin(TimeGenerated, 10m)\n| where CallCount > 5\n| order by CallCount desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "Suspicious AWS CLI Bucket Enumeration/Deletion Burst",
+          "description": "Vendor-agnostic version of the CloudTrail bucket-abuse pattern.",
+          "query": "title: Suspicious AWS S3 Bucket Enumeration or Deletion Burst\nid: 9d3f7a2c-4e6b-4c8a-9d1f-2e6b4a8c9d70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: cloud\n  product: aws\n  service: cloudtrail\ndetection:\n  selection:\n    eventName:\n      - 'ListBuckets'\n      - 'CreateBucket'\n      - 'DeleteBucket'\n      - 'PutBucketPolicy'\n  condition: selection | count() by userIdentity.arn > 5\nfalsepositives:\n  - Legitimate infrastructure-as-code deployments (Terraform, CloudFormation) that create/modify many buckets in a short window\nlevel: medium\ntags:\n  - attack.execution\n  - attack.t1059.009"
+        }
+      ],
+      "false_positives": [
+        "Infrastructure-as-code tooling (Terraform, CloudFormation, Pulumi) that legitimately performs bursts of resource creation/modification",
+        "Scheduled backup or cost-management automation that enumerates storage resources on a regular cadence"
+      ],
+      "response_steps": [
+        "Identify exactly which credential/identity was used and how it was likely obtained (leaked key, phished token, compromised service account)",
+        "Review the full API call history for that identity across the suspected compromise window, not just the flagged burst",
+        "Revoke/rotate the compromised credential and any session tokens issued under it",
+        "Check IAM policy changes specifically — a common objective is granting the attacker's own identity broader persistent access before the original credential is caught"
+      ],
+      "mitigations": [
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Deploy IAM/RBAC policies that limit administrative permissions to the minimum needed while maintaining a full audit trail." },
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Implement application controls blocking unauthorized PowerShell cmdlets and host resources from accessing cloud APIs." }
+      ],
+      "related": [
+        { "id": "T1003.005", "name": "Cached Domain Credentials", "relation": "Hybrid-identity environments (Entra Connect) tie on-prem credential theft directly to cloud API access via the same compromised identity." }
+      ]
+    },
+    {
+      "id": "T1059.010",
+      "name": "AutoHotkey & AutoIT",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/010/",
+      "overview": "AutoIT and AutoHotkey are Windows automation scripting languages built for tasks like simulating clicks and keystrokes and launching/closing programs. Adversaries write malicious .au3/.ahk scripts — often keyloggers or loaders — and either run them through the legitimate interpreter or compile them into a standalone .exe, which strips away the obvious 'a script is running' signal entirely.",
+      "concepts": [
+        {
+          "term": "Why compiling to .exe is the real evasion trick here",
+          "explanation": "Both AutoIT and AutoHotkey can compile a script into a self-contained executable that bundles the interpreter and the script logic together. The resulting binary doesn't look like a script at all from a process-monitoring standpoint — no AutoIt3.exe parent, no .au3 file on disk — which is exactly why detection strategies for this sub-technique lean on anomalous process lineage and command-line arguments of the compiled binary itself, not on catching the interpreter in the act."
+        },
+        {
+          "term": "Why these languages specifically suit GUI-automation-heavy payloads",
+          "explanation": "Unlike PowerShell or Python, AutoIT/AutoHotkey are purpose-built for simulating mouse clicks, keystrokes, and window interaction — which is why they show up disproportionately in keyloggers, click-fraud tooling, and loaders that need to interact with a GUI as part of their infection chain (dismissing dialogs, automating an installer), rather than in pure command-and-control frameworks."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "APT39", "activity": "Utilized AutoIt malware scripts embedded in Microsoft Office documents or malicious links." },
+        { "actor": "DarkGate", "activity": "Deploys AutoIt scripts like test.au3 to hidden directories during installation." },
+        { "actor": "XLoader", "activity": "Uses AutoIT scripts to decrypt payloads and execute them directly in victim memory." },
+        { "actor": "Lumma Stealer", "activity": "Utilizes both AutoIt scripts and compiled AutoIt executables." },
+        { "actor": "Melcoz", "activity": "Distributed through an AutoIt loader script." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 1 / Security 4688", "detail": "AutoIt3.exe or AutoHotkey.exe process creation with a script path, or a compiled binary exhibiting AutoIt/AHK runtime characteristics with no visible interpreter." },
+        { "source": "Sysmon 11 (FileCreate)", "detail": "Creation of .au3/.ahk script files, particularly in hidden or non-standard directories." },
+        { "source": "File hash / binary metadata", "detail": "Compiled AutoIt executables carry recognizable runtime resource signatures even when the interpreter itself never runs." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "AutoIt/AutoHotkey Interpreter Execution",
+          "description": "Flags execution of the AutoIt or AutoHotkey interpreters directly against a script file.",
+          "query": "title: AutoIt or AutoHotkey Script Execution\nid: 7c1e9a4d-3f6b-4c8e-9a2f-6d4b9c1e7f80\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\AutoIt3.exe'\n      - '\\AutoHotkey.exe'\n  condition: selection\nfalsepositives:\n  - Legitimate internal automation tooling built on AutoIt/AutoHotkey, common in some IT/helpdesk environments\nlevel: medium\ntags:\n  - attack.execution\n  - attack.t1059.010"
+        }
+      ],
+      "false_positives": [
+        "Legitimate internal helpdesk/deployment automation built on AutoIt or AutoHotkey",
+        "Accessibility tooling for users who rely on AutoHotkey for input assistance"
+      ],
+      "response_steps": [
+        "Recover the .au3/.ahk script content, or decompile a compiled binary if the interpreter itself never ran",
+        "Determine what GUI interactions or downloads the script performed",
+        "Check for a keylogging component specifically, given how common that is in this sub-technique's malware families",
+        "If compiled, hunt for the same binary's hash across the rest of the environment"
+      ],
+      "mitigations": [
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Block execution of AutoIt3.exe, AutoHotkey.exe, and related tools via application control unless required for legitimate operations." }
+      ],
+      "related": [
+        { "id": "T1059.001", "name": "PowerShell", "relation": "AutoIT/AHK is frequently used as a loader stage that ultimately decrypts and hands off to a PowerShell or shellcode payload." }
+      ]
+    },
+    {
+      "id": "T1059.011",
+      "name": "Lua",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Windows", "Linux", "macOS", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/011/",
+      "overview": "Lua is a lightweight scripting language designed for embedding inside applications — which is exactly why it shows up here: adversaries abuse Lua interpreters already bundled inside games, network device firmware, and other software, or ship their own standalone Lua interpreter alongside a malicious .lua script, rather than needing to write a full binary from scratch.",
+      "concepts": [
+        {
+          "term": "Why embedding is the whole point, for attackers too",
+          "explanation": "Lua was designed from the start to be embedded inside a host application rather than run standalone — which means a huge number of applications (games, network device firmware, IoT platforms) already carry a Lua interpreter for entirely legitimate reasons. An adversary who can get a malicious .lua file loaded into one of those existing embedded interpreters gets code execution without ever having to introduce a new standalone interpreter binary onto the system at all."
+        },
+        {
+          "term": "Why it shows up on network devices specifically",
+          "explanation": "Several network device platforms expose Lua as a supported scripting extension on top of their base CLI, letting administrators automate tasks the standard command set doesn't cover. That's precisely the surface Line Runner abused — Lua scripts running inside a compromised network device's existing embedded interpreter, blending in with what look like normal automation scripts to anyone not specifically hunting for it."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Line Runner", "activity": "Implements Lua scripts for executing commands on compromised network devices." },
+        { "actor": "PoetRAT", "activity": "Executed Lua scripts via a Windows-based Lua interpreter." },
+        { "actor": "RedLine Stealer", "activity": "Utilized Lua bytecode to conduct malicious operations." },
+        { "actor": "Remsec", "activity": "Deployed Lua-written modules for its execution capabilities." },
+        { "actor": "EvilBunny", "activity": "Employed Lua scripts to execute malicious payloads." }
+      ],
+      "data_sources": [
+        { "source": "Sysmon 1 / Security 4688", "detail": "A standalone Lua interpreter (lua.exe, luajit) executing with suspicious parent lineage or from an unexpected directory." },
+        { "source": "Application/embedded-interpreter logs", "detail": "Where the host application logs script loading, a .lua file loaded from an unusual location or by an unexpected internal component." },
+        { "source": "Network device syslog/AAA", "detail": "Lua script execution on a network device, correlated the same way as direct CLI command abuse under T1059.008." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Standalone Lua Interpreter Execution",
+          "description": "Flags execution of a standalone Lua interpreter outside an expected embedding application.",
+          "query": "title: Standalone Lua Interpreter Execution\nid: 5b9d3e7a-2f4c-4a8e-9d6b-3f7a2c9e5d10\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\lua.exe'\n      - '\\luajit.exe'\n  condition: selection\nfalsepositives:\n  - Legitimate software (games, development tools) that ships and uses a standalone Lua interpreter as part of normal operation\nlevel: low\ntags:\n  - attack.execution\n  - attack.t1059.011"
+        }
+      ],
+      "false_positives": [
+        "Games and legitimate applications that bundle and use Lua for scripting extensibility, which is Lua's primary real-world use case",
+        "Network automation tooling that legitimately uses Lua scripting extensions on supported devices"
+      ],
+      "response_steps": [
+        "Identify whether the interpreter is standalone or embedded inside another application, since that changes where to look for the malicious script",
+        "Recover the .lua script or bytecode content for analysis",
+        "Determine which application or device loaded it and whether that's consistent with the host's normal software inventory",
+        "On network devices, treat this the same as CLI abuse under T1059.008 for the response workflow"
+      ],
+      "mitigations": [
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Restrict or denylist standalone Lua interpreters where not operationally required." },
+        { "id": "M1047", "name": "Audit", "detail": "Inventory systems to identify unauthorized Lua installations." },
+        { "id": "M1033", "name": "Limit Software Installation", "detail": "Prevent unnecessary Lua installation by users." }
+      ],
+      "related": [
+        { "id": "T1059.008", "name": "Network Device CLI", "relation": "On network devices specifically, Lua scripting is an extension layer on top of the base CLI, often abused together." }
+      ]
+    },
+    {
+      "id": "T1059.012",
+      "name": "Hypervisor CLI",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/012/",
+      "overview": "esxcli and vim-cmd are ESXi's built-in administrative command-line tools, capable of configuring the firewall, managing log forwarding, enumerating every running VM, and controlling VM lifecycle (power off, delete) directly. Because a single ESXi host can carry dozens of production VMs, hypervisor CLI abuse is disproportionately high-impact — ransomware operators specifically use esxcli to enumerate and forcibly terminate VMs before encrypting their backing files, since a running VM's disk can't be encrypted while it's in use.",
+      "concepts": [
+        {
+          "term": "Why VM termination is the signature move here",
+          "explanation": "A VM's virtual disk file is locked while the VM is powered on, which means ransomware targeting ESXi datastores can't simply encrypt files out from under running VMs. esxcli's VM lifecycle commands solve that problem directly — list every running VM, then force-power-off each one — which is exactly the pattern Cheerscrypt and Royal both used, and precisely why unexpected bulk VM power-off events are one of the highest-confidence signals available for this sub-technique."
+        },
+        {
+          "term": "Why 'no specific mitigations' is the honest answer here",
+          "explanation": "MITRE's own guidance for this sub-technique notes there's no dedicated preventive control, because esxcli and vim-cmd are exploiting inherent, intended system functionality — full administrative capability is the entire point of these tools. That pushes the practical defense almost entirely onto access control (who can reach the ESXi management interface at all) and detection (catching abuse after the fact via unauthorized-user and off-hours-activity signals), rather than any technical restriction on the tools themselves."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Cheerscrypt", "activity": "Employed esxcli to terminate active virtual machines before encryption." },
+        { "actor": "Royal ransomware", "activity": "Used esxcli to enumerate running VMs and shut them down prior to encrypting datastores." },
+        { "actor": "UNC3886", "activity": "Modified firewall rules, deployed malware, and removed artifacts via esxcli." },
+        { "actor": "VIRTUALPIE", "activity": "Capable of executing commands on compromised ESXi servers." }
+      ],
+      "data_sources": [
+        { "source": "ESXi shell.log", "detail": "Every esxcli/vim-cmd command entered via the ESXi Shell or console, logged since ESXi 5.1 — the primary audit trail for this sub-technique." },
+        { "source": "ESXi auth.log", "detail": "Correlates shell.log commands back to the authenticated user/session that issued them." },
+        { "source": "vobd.log / hostd logs", "detail": "VM lifecycle events (power off, delete) and configuration changes issued through the management API, including via esxcli." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Bulk VM Power-Off via esxcli",
+          "description": "Flags a burst of VM power-off commands issued through esxcli in a short window — the ransomware-precursor pattern.",
+          "query": "title: Bulk VM Power-Off via esxcli\nid: 8e2c6a4d-9f3b-4c7e-8a1d-5f9c2b6e4a70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: esxi\ndetection:\n  selection:\n    command|contains: 'esxcli vm process kill'\n  condition: selection | count() by user > 3\nfalsepositives:\n  - Legitimate maintenance-window shutdowns performed by virtualization administrators (should still be rare and scheduled, not high-volume)\nlevel: critical\ntags:\n  - attack.execution\n  - attack.t1059.012"
+        }
+      ],
+      "false_positives": [
+        "Scheduled maintenance-window VM shutdowns performed by legitimate virtualization administrators",
+        "Automated DR/backup tooling that briefly powers off VMs for consistent snapshotting (uncommon, but exists in some configurations)"
+      ],
+      "response_steps": [
+        "Treat any unauthorized bulk VM power-off as an active ransomware precursor — this is time-critical, not just an investigative lead",
+        "Identify the authenticated session in auth.log responsible and immediately restrict its access",
+        "Check firewall and logging configuration for tampering alongside the VM commands",
+        "If encryption of datastore files has begun, isolate the host from shared storage immediately to limit blast radius to other hosts"
+      ],
+      "mitigations": [
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict who can authenticate to the ESXi management interface and shell at all; no dedicated technical mitigation exists beyond access control since esxcli/vim-cmd are intended administrative functionality." }
+      ],
+      "related": [
+        { "id": "T1059.004", "name": "Unix Shell", "relation": "ESXi Shell access is a Unix shell in its own right and is frequently the entry point before esxcli/vim-cmd commands are issued." }
+      ]
+    },
+    {
+      "id": "T1059.013",
+      "name": "Container CLI/API",
+      "tactic": "TA0002",
+      "tactic_name": "Execution",
+      "platforms": ["Containers"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1059/013/",
+      "overview": "Docker and Kubernetes both expose a full-featured API (dockerd, the Kubernetes control-plane API server) that their respective CLIs (docker, kubectl) and SDKs are just thin wrappers around. Adversaries use these to pull/build images, deploy or exec into containers, and enumerate cluster resources — kubectl exec specifically lets an attacker run arbitrary commands inside an already-running container/pod without needing a foothold on the underlying node at all.",
+      "concepts": [
+        {
+          "term": "Why the CLI is just a client — the API is the real surface",
+          "explanation": "Neither docker nor kubectl does anything magical themselves; both simply format and send HTTP requests to a daemon/API server that does the actual work. That means an attacker with network access to an exposed Docker daemon socket or Kubernetes API server can achieve the exact same outcomes using curl, a Python SDK, or a custom Go client — which is why detection and mitigation both focus on API-level authorization (RBAC, daemon TLS/socket protection) rather than on the CLI binaries themselves."
+        },
+        {
+          "term": "Why kubectl exec has an audit-log blind spot",
+          "explanation": "Kubernetes audit logs at the metadata level do capture that a `pods/exec` call happened (as a 'create' verb against that subresource), but what runs inside the shell that call opens is not visible at the API layer at all — that requires runtime observability (a tool like Falco watching syscalls inside the container) to see. This means audit logs alone tell you someone execed into a pod, but not what they actually did once inside, which is exactly why relying on API logs alone for this sub-technique leaves a real gap."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "TeamPCP", "activity": "Queried the Kubernetes API for service account tokens and deployed kubectl for lateral movement across infrastructure." },
+        { "actor": "Mini Shai-Hulud", "activity": "Utilized the Docker command-line tool to gather details of the victim environment and collect credentials." },
+        { "actor": "TeamTNT", "activity": "Targeted misconfigured containers and employed container CLI tools for unauthorized access." }
+      ],
+      "data_sources": [
+        { "source": "Kubernetes audit logs", "detail": "API server requests logged with the 'create' verb against the pods/exec subresource — the primary signal that someone opened an interactive session inside a running pod." },
+        { "source": "Docker daemon logs / docker events", "detail": "Container creation, exec, and image pull/build events from the dockerd API." },
+        { "source": "Runtime observability (Falco or similar)", "detail": "Syscall-level visibility inside the container itself, needed to see what actually happened during a kubectl exec/docker exec session since the API log doesn't capture it." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "kubectl exec Against a Production Namespace",
+          "description": "Flags pods/exec API calls (the audit-log signature of kubectl exec / docker exec-equivalent) outside expected CI/CD automation identities.",
+          "query": "title: kubectl exec Against Production Namespace\nid: 1a6c9e3d-7b5f-4d2a-8c1e-6f4b9a2d7c60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: kubernetes\ndetection:\n  selection:\n    objectRef.subresource: 'exec'\n    verb: 'create'\n  filter_cicd:\n    user.username|startswith: 'system:serviceaccount:ci-cd:'\n  condition: selection and not filter_cicd\nfalsepositives:\n  - Legitimate on-call debugging sessions by platform engineers, which should still be individually attributable and infrequent\nlevel: medium\ntags:\n  - attack.execution\n  - attack.t1059.013"
+        }
+      ],
+      "false_positives": [
+        "Legitimate on-call debugging via kubectl exec by platform engineers — scope the rule to production namespaces and unexpected identities rather than blocking this outright",
+        "CI/CD pipelines that legitimately use docker exec/kubectl exec as part of automated testing"
+      ],
+      "response_steps": [
+        "Identify the authenticated identity (user or service account) that issued the exec call and whether it's consistent with expected CI/CD or on-call activity",
+        "Pull runtime observability data (if available) for what actually happened inside the container during that session",
+        "Check for any service account token exfiltration or RBAC changes made during or after the session",
+        "If the container/pod's underlying image or configuration was modified, treat that as a persistence attempt and rebuild from a known-good image"
+      ],
+      "mitigations": [
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Enforce restrictive RBAC policies in Kubernetes; secure the Docker daemon via SSH/TLS with certificate validation; implement rootless container execution." },
+        { "id": "M1038", "name": "Execution Prevention", "detail": "Restrict scripting capabilities and block client libraries (Python/Go) that interact with Kubernetes and Docker from within applications that don't need them." }
+      ],
+      "related": [
+        { "id": "T1003.007", "name": "Proc Filesystem", "relation": "Once inside a container via exec, /proc-based credential scraping against other processes on the shared host kernel is a common escalation path." }
+      ]
+    }
+  ]
+}
