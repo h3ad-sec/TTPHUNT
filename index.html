@@ -60,7 +60,7 @@ body.light{
 html{scroll-behavior:smooth;}
 a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:3px;}
 body{background:var(--bg);color:var(--text);font-family:'Exo 2',sans-serif;font-size:14px;line-height:1.6;
-  min-height:100vh;transition:background .25s,color .25s;overflow-x:hidden;}
+  min-height:100dvh;display:flex;flex-direction:column;transition:background .25s,color .25s;overflow-x:hidden;}
 body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
   background:radial-gradient(ellipse 80% 45% at 50% 0%,rgba(0,212,255,.055) 0%,transparent 100%),
              radial-gradient(ellipse 50% 35% at 5% 100%,rgba(0,212,255,.04) 0%,transparent 100%);}
@@ -117,12 +117,13 @@ body.light .toggle-thumb{transform:translateX(22px);}
 
 /* ── Footer ── */
 .tracer-footer{flex-shrink:0;border-top:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;
-  justify-content:space-between;font-family:var(--mono);font-size:11px;flex-wrap:wrap;gap:10px;background:var(--panel);}
+  justify-content:space-between;font-family:var(--ui);font-size:var(--fs-xs);color:var(--muted);letter-spacing:.08em;
+  flex-wrap:wrap;gap:10px;background:var(--panel);}
 .footer-left{color:var(--muted);}
 .footer-right{color:var(--muted);text-transform:uppercase;opacity:.85;}
 .footer-credit-row{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;}
 .footer-credit-pill{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:6px;padding:4px 12px;border:1px solid var(--border);
-  border-radius:20px;font-family:var(--mono);font-size:10px;text-decoration:none;transition:.15s;}
+  border-radius:999px;font-family:'Exo 2',sans-serif;font-weight:500;font-size:var(--fs-xs);text-decoration:none;transition:.15s;}
 .footer-credit-pill:hover{border-color:var(--accent);}
 .footer-credit-pill .credit-tool{font-weight:700;letter-spacing:2px;}
 .footer-credit-pill .credit-by{color:var(--muted);}
@@ -132,8 +133,8 @@ body.light .footer-left,body.light .footer-right,body.light .footer-credit-pill 
 body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
 
 /* ── App shell: sidebar tree + detail panel ── */
-.tt-app{position:relative;z-index:1;padding-top:var(--nav-h);min-height:100dvh;display:flex;flex-direction:column;font-family:var(--ui);}
-.tt-body{flex:1;display:flex;min-height:0;height:calc(100dvh - var(--nav-h));}
+.tt-app{position:relative;z-index:1;padding-top:var(--nav-h);flex:1;min-height:0;display:flex;flex-direction:column;font-family:var(--ui);}
+.tt-body{flex:1;display:flex;min-height:0;}
 .tt-sidebar{width:360px;max-width:100%;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;
   background:var(--panel-alt);min-height:0;transition:transform .25s var(--ease);}
 .tt-sidebar-backdrop{display:none;}
