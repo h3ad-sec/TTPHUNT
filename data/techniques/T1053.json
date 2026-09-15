@@ -162,6 +162,10 @@
         {
           "term": "Hiding a task from its own management tools",
           "explanation": "Deleting or corrupting a task's Security Descriptor (SD) registry value under the Task Scheduler's own registry tree makes that task invisible to both the Task Scheduler GUI and schtasks /query, while it continues to fire exactly as scheduled underneath. This is a distinctly Windows-specific evasion trick with no equivalent among cron, systemd timers, or Kubernetes CronJobs — none of those schedulers have an analogous 'hide from your own enumeration tool' registry knob."
+        },
+        {
+          "term": "A COM handler action has no command line to inspect at all",
+          "explanation": "Task Scheduler supports a second action type beyond \"run this program\": invoking a registered COM object by CLSID instead. Neither schtasks.exe's own output nor the Task Scheduler GUI (which just labels it \"Custom Handler\") shows what that COM handler actually does, and because there's no executable path or command-line string involved, every detection strategy built around inspecting a task's command line — including several of the queries in this pack — has nothing to match against. Confirming what a COM-handler task really runs means resolving its CLSID back to the registered handler in the registry, not reading the task definition itself."
         }
       ],
       "procedure_examples": [

@@ -52,6 +52,10 @@
         {
           "term": "Why full GUI access changes the risk calculus",
           "explanation": "Once an attacker has an RDP session, they don't need any additional tooling to be immediately productive — file explorer, a browser, whatever admin tools happen to be installed are all right there, exactly as a legitimate user would use them. That's precisely why internet-exposed RDP is treated as close to a hard no rather than a risk to be merely monitored: the cost of a successful compromise is a complete, no-extra-effort-required interactive session, not just a foothold."
+        },
+        {
+          "term": "Restricted Admin Mode: a hardening feature that opened its own Pass-the-Hash path",
+          "explanation": "Restricted Admin Mode was introduced specifically to stop RDP from leaving reusable plaintext-equivalent credentials on the target by converting the session to a network logon (Type 3) instead of the usual RemoteInteractive (Type 10) logon. The side effect: because the server no longer needs the actual password, only proof of knowing it, an attacker holding just an NTLM hash can use Mimikatz's `sekurlsa::pth` to launch `mstsc.exe /restrictedadmin` and RDP into the target directly with the hash alone, no cracking required — turning a credential-protection feature into a new Pass-the-Hash delivery path, provided the target host has Restricted Admin Mode enabled and the attacker already holds local admin rights somewhere to extract the hash from."
         }
       ],
       "procedure_examples": [
@@ -392,6 +396,10 @@
         {
           "term": "Salt Typhoon's loopback trick as a case study in ACL bypass",
           "explanation": "Salt Typhoon modified a compromised switch's loopback interface address specifically so their SSH connections would appear to originate from a trusted internal address rather than their real source — defeating access control lists scoped to \"only accept SSH from these expected internal ranges.\" It's a concrete illustration of a broader point: source-IP-based SSH restrictions are only as strong as the assumption that the visible source IP reflects where a connection actually originated, and on network infrastructure the attacker already controls, that assumption can be deliberately broken."
+        },
+        {
+          "term": "Agent forwarding turns one compromised jump host into every host that trusts its users",
+          "explanation": "When a user connects with SSH agent forwarding enabled, their local ssh-agent's private key never actually leaves their machine — but the agent creates a Unix socket on the intermediate host and exports its path via SSH_AUTH_SOCK, so anything with sufficient permission on that intermediate host to read the socket can relay signing requests through it and authenticate onward as that user, to every host that trusts their key, without the private key material itself ever being extracted or exposed. A root-level attacker on a jump host doesn't need to steal a key file at all; they just need to find and reuse someone else's forwarded agent socket while that person's session happens to be active, which is exactly why disabling agent forwarding (or using ProxyJump instead) closes this path entirely rather than just making key theft harder."
         }
       ],
       "procedure_examples": [

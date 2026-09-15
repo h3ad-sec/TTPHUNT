@@ -63,6 +63,10 @@
         {
           "term": "Integration-created accounts are the easy-to-miss variant",
           "explanation": "vpxuser is the clean example: it doesn't exist until an ESXi host is connected to vCenter, at which point it's created automatically with vCenter-scoped privileges. Because it wasn't part of the initial OS install, it's exactly the kind of account a first-pass \"list default accounts\" audit misses — the audit has to account for what gets created by every downstream integration, not just what ships in the box."
+        },
+        {
+          "term": "Kubernetes' own default service account is a default-account risk hiding in plain sight",
+          "explanation": "Every namespace gets a `default` ServiceAccount automatically, and unless a pod spec explicitly sets `automountServiceAccountToken: false`, Kubernetes mounts that account's API token into the container's filesystem whether the workload needs cluster-API access or not. A compromised pod running with no legitimate reason to talk to the Kubernetes API can still read that token straight off disk and start making authenticated calls against the cluster — the exact same 'default credential nobody rotated or scoped down' pattern as a factory admin password, just expressed as a Kubernetes primitive instead of a device login."
         }
       ],
       "procedure_examples": [
@@ -422,6 +426,10 @@
         {
           "term": "Service principals: the non-human blind spot, cloud edition",
           "explanation": "Service principals and managed identities are the cloud analogue of domain service accounts — they hold powerful API permissions, can't respond to an MFA prompt because there's no human behind them, and are easy to create without drawing attention. APT29 didn't need to steal an existing one during the SolarWinds compromise; using a compromised O365 admin account, they simply created a new Service Principal with the access they wanted, which is a persistence mechanism as much as an access one."
+        },
+        {
+          "term": "The Primary Refresh Token is a distinct, more powerful artifact than a browser session cookie",
+          "explanation": "On a Windows device that's Azure AD joined or hybrid joined, Microsoft's own token broker issues a Primary Refresh Token (PRT) — a device-bound JWT, backed by a TPM-protected session key, that underpins single sign-on across every Microsoft app on that device and stands in for both the user's and the device's identity at once. Tools like ROADtoken and AADInternals can extract the PRT and its session key directly from a compromised device (via Cobalt Strike or similar tooling) and mint fresh SSO tokens from it — a materially more powerful theft than lifting a single browser session cookie, since a PRT effectively satisfies the device-compliance/hybrid-join condition many Conditional Access policies specifically require, without ever putting hands on the TPM-sealed key itself."
         }
       ],
       "procedure_examples": [
