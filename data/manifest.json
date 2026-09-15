@@ -1,6 +1,6 @@
 {
   "generated": "2026-09-15",
-  "count": 7,
+  "count": 9,
   "techniques": [
     {
       "id": "T1003",
@@ -125,6 +125,35 @@
         { "id": "T1053.005", "name": "Scheduled Task" },
         { "id": "T1053.006", "name": "Systemd Timers" },
         { "id": "T1053.007", "name": "Container Orchestration Job" }
+      ]
+    },
+    {
+      "id": "T1566",
+      "name": "Phishing",
+      "tactic": "TA0001",
+      "tactic_name": "Initial Access",
+      "platforms": ["Windows", "Linux", "macOS", "Office Suite", "SaaS", "Identity Provider"],
+      "file": "techniques/T1566.json",
+      "subtechniques": [
+        { "id": "T1566.001", "name": "Spearphishing Attachment" },
+        { "id": "T1566.002", "name": "Spearphishing Link" },
+        { "id": "T1566.003", "name": "Spearphishing via Service" },
+        { "id": "T1566.004", "name": "Spearphishing Voice" }
+      ]
+    },
+    {
+      "id": "T1071",
+      "name": "Application Layer Protocol",
+      "tactic": "TA0011",
+      "tactic_name": "Command and Control",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices"],
+      "file": "techniques/T1071.json",
+      "subtechniques": [
+        { "id": "T1071.001", "name": "Web Protocols" },
+        { "id": "T1071.002", "name": "File Transfer Protocols" },
+        { "id": "T1071.003", "name": "Mail Protocols" },
+        { "id": "T1071.004", "name": "DNS" },
+        { "id": "T1071.005", "name": "Publish/Subscribe Protocols" }
       ]
     }
   ]

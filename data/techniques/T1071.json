@@ -1,0 +1,563 @@
+{
+  "id": "T1071",
+  "name": "Application Layer Protocol",
+  "tactic": "TA0011",
+  "tactic_name": "Command and Control",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "ESXi",
+    "Network Devices"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1071/",
+  "overview": "Adversaries embed command-and-control traffic inside standard application-layer protocols — HTTP/S, FTP/SMB, SMTP/IMAP/POP3, DNS, and MQTT/XMPP-style publish/subscribe channels — so that malicious communication blends into the enormous volume of legitimate traffic those protocols already carry. This is the technique family that decides whether a C2 beacon looks like an anomaly worth a network analyst's attention or like just another line in a proxy log full of millions of identical-looking requests. The five sub-techniques below split by protocol family because each one has a different legitimate baseline, a different set of fields adversaries hide data in, and a different detection surface — what looks glaringly anomalous in DNS traffic is completely unremarkable in HTTP, and vice versa.",
+  "prerequisite_concepts": [
+    {
+      "term": "Blending in beats encrypting, for evading a curious analyst",
+      "explanation": "Encryption hides the content of C2 traffic, but it doesn't hide the fact that traffic exists, where it's going, or how often. Riding on a protocol every device in the network already generates constantly — HTTP, DNS, mail — means the traffic doesn't stand out on a flow-volume or protocol-distribution chart at all. That's a different, and often more durable, evasion property than encryption alone, which is why this technique family remains dominant even in networks with full TLS interception and DNS-over-HTTPS visibility."
+    },
+    {
+      "term": "The protocol choice is a bet about what the network already allows out",
+      "explanation": "Every sub-technique here exploits the same underlying assumption: firewalls and egress filters that carefully restrict unusual ports almost always leave 80/443, DNS (53), and often SMTP wide open, because blocking them breaks normal business operations. An adversary picks the protocol most likely to already be permitted outbound from wherever they landed — DNS resolvers are reachable from nearly every host by design, web egress is nearly universal, and mail relays are common in environments with any on-prem Exchange presence. Detection engineering for this pack is as much about knowing your own egress policy as it is about knowing the malware."
+    },
+    {
+      "term": "Beaconing regularity is the signal that survives protocol changes",
+      "explanation": "Whatever protocol an adversary picks, a C2 implant that needs to check in for further instructions produces some kind of periodic or jittered-periodic outbound connection pattern — a beacon. Content-based detection has to be rewritten every time the protocol or encoding scheme changes; timing-based detection (regular intervals, low-and-slow cadence, consistent payload-size buckets) doesn't care which of the five sub-techniques below is in use, because the behavior of 'check in, wait, check in again' is the actual constant across all of them."
+    },
+    {
+      "term": "TLS inspection changes the economics of this whole pack, for better and worse",
+      "explanation": "Without TLS interception, most of what a defender can see in HTTPS-based C2 (T1071.001) is metadata: destination, JA3/JA3S fingerprint, certificate details, connection timing. With interception, header and body content become visible, at the cost of significant infrastructure investment and inspection blind spots (certificate pinning, mutual TLS). Every detection strategy in this pack is written assuming metadata-level visibility is the baseline and content-level visibility is a bonus, because that's the actual visibility posture in most environments outside of a small number of fully instrumented networks."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1071.001",
+      "name": "Web Protocols",
+      "tactic": "TA0011",
+      "tactic_name": "Command and Control",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1071/001/",
+      "overview": "The overwhelming majority of documented C2 frameworks and malware families — Cobalt Strike, Empire, Emotet, IcedID, and hundreds more — communicate over plain HTTP or HTTPS, because it is the single protocol guaranteed to be permitted outbound from nearly every corporate network on earth. Commands and results get embedded in POST bodies, cookie values, custom headers, or even URI paths, and TLS wraps the whole exchange in the same encryption that protects every legitimate web session on the network.",
+      "concepts": [
+        {
+          "term": "Legitimate cloud services as a C2 relay, not just a protocol",
+          "explanation": "Beyond raw HTTP/S to attacker infrastructure, adversaries increasingly proxy C2 through legitimate, high-reputation services — Slack, Discord, Dropbox, GitHub Gists, Microsoft Graph API — so that the destination itself looks completely benign to domain-reputation and threat-intel-based blocking. This shifts the detection burden from 'is this destination bad' (it usually isn't) to 'is this specific account/API-key/traffic-pattern against this legitimate service unusual for what this host normally does there.'"
+        },
+        {
+          "term": "JA3/JA3S fingerprinting sees through TLS content encryption",
+          "explanation": "Even without decrypting the payload, the TLS handshake itself — cipher suite order, extensions, elliptic curves offered — produces a fingerprint that's often distinctive to the TLS library a piece of malware statically links, which frequently differs from the fingerprint a real browser on that host produces. A host whose HTTPS traffic carries a non-browser JA3 fingerprint talking to a destination the user never navigated to in a browser is a strong C2 candidate independent of anything in the encrypted content."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT28",
+          "activity": "Used the CHOPSTICK malware family to communicate over a blend of HTTP and HTTPS for command and control, selected per module configuration."
+        },
+        {
+          "actor": "Sandworm Team",
+          "activity": "Used BlackEnergy to communicate between compromised hosts and command-and-control servers via HTTP POST requests during the 2015 Ukraine electric power attack."
+        },
+        {
+          "actor": "APT34 (OilRig)",
+          "activity": "Used HTTP for C2 and incorporated Exchange Web Services API calls to deliver commands to compromised hosts."
+        },
+        {
+          "actor": "APT41",
+          "activity": "Used HTTP to retrieve second-stage payloads while exploiting CVE-2019-19781 and CVE-2020-10189."
+        },
+        {
+          "actor": "Cobalt Strike",
+          "activity": "Implements a fully configurable HTTP/HTTPS C2 profile, allowing operators to mimic the traffic pattern of arbitrary legitimate web services."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Web proxy / firewall logs",
+          "detail": "Repeated HTTP/S requests from a single host to a small set of destinations at regular intervals, or POST requests with unusually consistent payload sizes."
+        },
+        {
+          "source": "TLS metadata (JA3/JA3S)",
+          "detail": "A non-browser TLS client fingerprint originating from a process that isn't a browser, especially against a destination with no corresponding browser history."
+        },
+        {
+          "source": "Sysmon Event 3 (Network Connection) + Event 1 (Process Create)",
+          "detail": "Outbound HTTP/S connections initiated by a process that has no legitimate reason to reach the internet directly (a backup agent, a service binary, a LOLBin)."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Regular-Interval Beaconing to a Single External Destination",
+          "description": "Surfaces hosts making HTTP/S requests to the same external destination at a consistent time interval, the core signature of C2 beaconing regardless of payload content.",
+          "query": "DeviceNetworkEvents\n| where RemotePort in (80, 443)\n| where RemoteUrl !in (KnownGoodDomainsList)\n| summarize ConnCount = count(), Times = make_list(Timestamp) by DeviceId, RemoteUrl, bin(Timestamp, 1h)\n| where ConnCount >= 10\n| extend Intervals = series_stats_dynamic(Times)\n| project DeviceId, RemoteUrl, ConnCount"
+        },
+        {
+          "language": "Sigma",
+          "title": "Non-Browser Process Making Direct HTTPS Connection",
+          "description": "Flags a process other than a known browser or update service directly establishing an outbound HTTPS connection, a common signature of an implant's raw HTTP client library.",
+          "query": "title: Non-Browser Process Direct HTTPS Connection\nid: 1f8a4c9d-6e3b-4d7a-9c2f-8e5b3a7d1f40\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  selection:\n    DestinationPort: 443\n    Initiated: 'true'\n  filter_known:\n    Image|endswith:\n      - '\\chrome.exe'\n      - '\\msedge.exe'\n      - '\\firefox.exe'\n      - '\\svchost.exe'\n      - '\\OneDrive.exe'\n  condition: selection and not filter_known\nfalsepositives:\n  - Legitimate third-party applications and update agents with their own bundled HTTPS client libraries\nlevel: low\ntags:\n  - attack.command_and_control\n  - attack.t1071.001"
+        }
+      ],
+      "false_positives": [
+        "Legitimate software update mechanisms and telemetry/analytics agents that beacon at regular intervals by design",
+        "Third-party SaaS connectors and business applications with their own bundled HTTP client libraries and non-browser TLS fingerprints",
+        "Content delivery network health checks and monitoring agents polling on a fixed schedule"
+      ],
+      "response_steps": [
+        "Isolate the host and capture full packet data (or proxy logs at minimum) for the flagged destination before blocking it, to preserve evidence of the C2 protocol in use",
+        "Extract and hunt for the JA3/JA3S fingerprint and any observed URI/header patterns across the rest of the environment for related compromises",
+        "Block the destination domain/IP at the proxy and firewall, and submit indicators to threat intelligence for correlation",
+        "Review DNS resolution history for the flagged domain to identify fast-flux or domain-generation-algorithm patterns indicating a broader campaign"
+      ],
+      "mitigations": [
+        {
+          "id": "M1031",
+          "name": "Network Intrusion Prevention",
+          "detail": "Deploy signature and behavioral detection for known C2 frameworks' HTTP/S traffic patterns and JA3 fingerprints."
+        },
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Enforce egress filtering and require all outbound web traffic to route through an authenticated, logged proxy."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1059.001",
+          "name": "PowerShell",
+          "relation": "A common client for initiating raw HTTP/S C2 requests directly via Invoke-WebRequest or .NET HTTP classes, bypassing normal browser telemetry."
+        },
+        {
+          "id": "T1105",
+          "name": "Ingress Tool Transfer",
+          "relation": "Frequently rides the same HTTP/S channel established for C2, retrieving second-stage tooling over the same beacon connection.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "A non-browser process on a host establishes outbound HTTPS connections to the same external destination at a consistent interval (plus or minus a small jitter window) at least ten times within an hour.",
+        "rationale": "Tune the interval-regularity threshold against your own telemetry-agent baseline before trusting it -- legitimate monitoring and update agents are the dominant false-positive source, and a poorly-tuned threshold will bury genuine beacons under agent noise rather than the reverse."
+      }
+    },
+    {
+      "id": "T1071.002",
+      "name": "File Transfer Protocols",
+      "tactic": "TA0011",
+      "tactic_name": "Command and Control",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1071/002/",
+      "overview": "Adversaries use SMB, FTP, FTPS, TFTP, or SCP as a C2 or staging channel, taking advantage of the fact that file-transfer traffic is a normal and expected part of internal network activity — especially SMB, which nearly every Windows environment generates constantly for legitimate file sharing and named-pipe communication. Cobalt Strike's SMB beacon in particular routes peer-to-peer C2 traffic over named pipes between hosts on the same internal network, which never needs to touch the internet-facing firewall at all.",
+      "concepts": [
+        {
+          "term": "SMB-based C2 is internal, not internet-facing, which flips the usual detection assumption",
+          "explanation": "Most C2 detection assumes the interesting traffic crosses the network egress point, where a proxy or firewall can see it. An SMB named-pipe beacon relays commands between an internet-facing 'parent' beacon and internal 'child' beacons entirely within the LAN, meaning the only host that ever talks to the internet is the first one compromised — every hop after that is invisible to perimeter-focused monitoring and only visible in internal host-to-host traffic or named-pipe telemetry on the endpoint itself."
+        },
+        {
+          "term": "FTP/TFTP survives in unexpected corners of the network",
+          "explanation": "Modern enterprise environments rarely use plain FTP for legitimate business purposes anymore, which is exactly why its continued presence is a useful signal: legacy network device firmware updates, ESXi host management, and certain industrial/OT equipment still commonly rely on FTP or TFTP, meaning it can't be blocked outright everywhere, but any FTP/TFTP session from a general-purpose Windows workstation or server is disproportionately suspicious compared to the same traffic from a known network-appliance management subnet."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT41",
+          "activity": "Used FTP to download second-stage payloads during multiple intrusion campaigns."
+        },
+        {
+          "actor": "Dragonfly",
+          "activity": "Employed SMB for command-and-control communications against energy-sector targets."
+        },
+        {
+          "actor": "Kazuar",
+          "activity": "Leveraged both FTP and FTPS for command-and-control server communications."
+        },
+        {
+          "actor": "Machete",
+          "activity": "Used FTP for command-and-control operations as part of its data collection and exfiltration toolkit."
+        },
+        {
+          "actor": "Cobalt Strike",
+          "activity": "Supports SMB-based peer-to-peer beacons that relay C2 between compromised hosts over Windows named pipes without any direct internet egress."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon Event 18 / Named Pipe monitoring",
+          "detail": "Creation of named pipes with randomized or known-malicious-pattern names consistent with Cobalt Strike's default or lightly-modified SMB beacon naming."
+        },
+        {
+          "source": "Firewall / NetFlow",
+          "detail": "FTP, FTPS, or TFTP sessions originating from general-purpose endpoints rather than known network-device management subnets, especially with large outbound transfer volume."
+        },
+        {
+          "source": "Process command-line logging",
+          "detail": "PowerShell, cmd.exe, or rundll32 directly invoking an FTP client or initiating an SMB session to an unfamiliar internal or external host."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Suspicious Named Pipe Creation Consistent with SMB Beacon",
+          "description": "Flags named pipe creation events matching known default or lightly-randomized Cobalt Strike SMB beacon naming conventions.",
+          "query": "title: Cobalt Strike Default Named Pipe\nid: 3d7a9c5e-8f2b-4c6d-9e1a-5b8c3d9f7a20\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: pipe_created\n  product: windows\ndetection:\n  selection:\n    PipeName|contains:\n      - 'MSSE-'\n      - 'postex_'\n      - 'status_'\n  condition: selection\nfalsepositives:\n  - Unlikely; these patterns are specific to known C2 framework defaults, though a rebranded or heavily modified toolkit will not match\nlevel: high\ntags:\n  - attack.command_and_control\n  - attack.lateral_movement\n  - attack.t1071.002"
+        },
+        {
+          "language": "KQL",
+          "title": "FTP/TFTP Session From a Non-Network-Device Host",
+          "description": "Flags FTP or TFTP traffic originating from a general-purpose workstation or server subnet rather than the known network-management VLAN.",
+          "query": "DeviceNetworkEvents\n| where RemotePort in (20, 21, 69)\n| where DeviceId !in (KnownNetworkDeviceManagementHosts)\n| summarize BytesSent = sum(SentBytes), SessionCount = count() by DeviceId, RemoteIP\n| where SessionCount > 3 or BytesSent > 50000000\n| order by BytesSent desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate network device firmware update or configuration backup processes using TFTP from an approved management host",
+        "ESXi host management and patching workflows that rely on SCP or FTP for image transfer",
+        "Older line-of-business applications with a legacy FTP-based file exchange integration that hasn't yet been modernized"
+      ],
+      "response_steps": [
+        "Capture and preserve named-pipe and network-session evidence before terminating the connection, since it's often the clearest indicator of the specific C2 framework in use",
+        "Map every host participating in the named-pipe relay chain, since SMB-based C2 is designed to move commands between many internal hosts, not just the perimeter-facing one",
+        "Block the destination and rotate any credentials transmitted in plaintext over an FTP session during the compromise window",
+        "Audit for legitimate business justification of any FTP/TFTP service running outside its expected management subnet, and decommission it if unjustified"
+      ],
+      "mitigations": [
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Restrict FTP/SFTP/TFTP traffic to trusted, documented internal systems and known network-management subnets only."
+        },
+        {
+          "id": "M1031",
+          "name": "Network Intrusion Prevention",
+          "detail": "Deploy signatures targeting known SMB-based C2 named-pipe patterns and unauthorized FTP protocol usage."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1021.002",
+          "name": "SMB/Windows Admin Shares",
+          "relation": "Shares the same underlying SMB transport this sub-technique's C2 channel rides on, making named-pipe telemetry doubly valuable across both techniques."
+        },
+        {
+          "id": "T1570",
+          "name": "Lateral Tool Transfer",
+          "relation": "Frequently uses the same file-transfer protocols covered here to move tooling between already-compromised internal hosts.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "A named pipe matching a known or lightly-modified Cobalt Strike default naming pattern is created on a host that has no documented reason to be running that C2 framework's post-exploitation tooling.",
+        "rationale": "Pair this with a lateral-movement timeline immediately -- SMB-based beacons imply an internal relay chain by design, so a single hit almost never represents the full scope of affected hosts."
+      }
+    },
+    {
+      "id": "T1071.003",
+      "name": "Mail Protocols",
+      "tactic": "TA0011",
+      "tactic_name": "Command and Control",
+      "platforms": ["Windows", "Linux", "macOS", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1071/003/",
+      "overview": "Adversaries embed commands and exfiltrated data inside SMTP, IMAP, or POP3 traffic, frequently using free webmail accounts (self-registered Gmail addresses being a documented favorite of APT28) as a C2 relay that requires no attacker-owned infrastructure at all — just a mailbox. Because mail traffic is ubiquitous and expected in nearly every enterprise, a beacon disguised as ordinary email blends into a volume of legitimate traffic that most network monitoring treats as inherently low-risk.",
+      "concepts": [
+        {
+          "term": "Using a legitimate provider's infrastructure removes the domain-reputation signal entirely",
+          "explanation": "C2 over a self-registered Gmail or Outlook.com account means the destination IP/domain a network defender sees is mail.google.com or outlook.office365.com — infrastructure with the best possible reputation score on earth, used by every legitimate business email flow in the organization. Domain and IP reputation blocking, the first line of defense against most other C2 channels, contributes essentially nothing here; the compromise has to be found in account-level or content-level anomalies instead, like an unfamiliar account being contacted by a specific internal host at a suspiciously regular interval."
+        },
+        {
+          "term": "This channel doubles as covert data staging, not just command delivery",
+          "explanation": "Because mail attachments and message bodies can carry arbitrary encoded data, the same channel used to receive commands is frequently used to exfiltrate results — sent as an attachment or embedded in a reply to the same attacker-controlled mailbox. A single mailbox can function as full two-way C2 infrastructure with no separate exfiltration channel needed at all, which is why detecting outbound mail volume/frequency anomalies matters just as much as detecting inbound command traffic."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT28",
+          "activity": "Used IMAP, POP3, and SMTP for C2 communication channels, leveraging self-registered Gmail accounts alongside victim-owned email servers."
+        },
+        {
+          "actor": "Sofacy Group",
+          "activity": "Used SMTP/S and POP3/S protocols for command-and-control communications via its Zebrocy and Cannon malware families."
+        },
+        {
+          "actor": "Turla",
+          "activity": "Used the ComRAT and LightNeuron implants to embed C2 commands within email attachments and custom protocols layered over SMTP."
+        },
+        {
+          "actor": "Agent Tesla",
+          "activity": "Used SMTP to exfiltrate captured keystrokes and credentials to an attacker-controlled mailbox."
+        },
+        {
+          "actor": "Kimsuky",
+          "activity": "Delivered exfiltrated reconnaissance data to attacker-controlled email addresses as part of its collection workflow."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Email gateway / mail server logs",
+          "detail": "Outbound SMTP connections from an endpoint process (rather than a legitimate mail client) or an unusually high volume of small, regularly-spaced messages to a single external address."
+        },
+        {
+          "source": "Sysmon Event 3 (Network Connection)",
+          "detail": "A non-mail-client process (PowerShell, rundll32, a custom binary) directly establishing a connection on SMTP/IMAP/POP3 ports (25, 465, 587, 993, 995)."
+        },
+        {
+          "source": "DLP / outbound content inspection",
+          "detail": "Base64 or otherwise encoded content in message bodies or attachments inconsistent with normal business correspondence patterns."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Non-Mail-Client Process Connecting to Mail Protocol Ports",
+          "description": "Flags a process other than a known mail client or mail server service directly connecting on SMTP/IMAP/POP3 ports, consistent with malware implementing its own mail-protocol C2 client.",
+          "query": "title: Non-Mail-Client Process on SMTP-IMAP-POP3 Ports\nid: 6c9f4a2d-3e7b-4c9a-8d1f-6b3e9a4c7d10\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  selection:\n    DestinationPort:\n      - 25\n      - 465\n      - 587\n      - 993\n      - 995\n  filter_known:\n    Image|endswith:\n      - '\\OUTLOOK.EXE'\n      - '\\thunderbird.exe'\n  condition: selection and not filter_known\nfalsepositives:\n  - Legitimate scripting or automation tools that send mail via SMTP as part of an approved business workflow (e.g., a monitoring script emailing alerts)\nlevel: medium\ntags:\n  - attack.command_and_control\n  - attack.exfiltration\n  - attack.t1071.003"
+        },
+        {
+          "language": "KQL",
+          "title": "High-Frequency Outbound Mail to a Single External Recipient",
+          "description": "Surfaces a mailbox sending an unusually high volume of small, regularly-spaced messages to one external address, consistent with mail-based C2 beaconing or staged exfiltration.",
+          "query": "EmailEvents\n| where Direction == \"Outbound\"\n| summarize MsgCount = count(), AvgSizeKB = avg(Size / 1024.0) by SenderMailFromAddress, RecipientEmailAddress, bin(Timestamp, 1h)\n| where MsgCount > 15 and AvgSizeKB < 50\n| order by MsgCount desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate automated monitoring, alerting, or reporting scripts that send email via SMTP as part of an approved business process",
+        "Marketing or transactional email systems generating high-volume, regularly-spaced outbound messages by design",
+        "Mail-relay or gateway appliances that legitimately connect on non-standard mail ports as part of their normal function"
+      ],
+      "response_steps": [
+        "Identify and disable the specific mailbox or mail-relay credential the implant is using, since revoking network access alone won't stop a webmail-based channel",
+        "Recover and analyze message content sent to/from the suspected C2 mailbox for command history and exfiltrated data scope",
+        "Block the destination mail domain/address at the gateway and report the abused webmail account to the provider",
+        "Audit for other hosts in the environment communicating with the same mailbox address, since mail-based C2 is often reused across a campaign"
+      ],
+      "mitigations": [
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Restrict which internal systems and processes may initiate outbound SMTP/IMAP/POP3 connections directly, routing all legitimate mail through an approved corporate mail server."
+        },
+        {
+          "id": "M1031",
+          "name": "Network Intrusion Prevention",
+          "detail": "Deploy signature-based detection for known malware families' mail-protocol C2 traffic patterns."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1566.002",
+          "name": "Spearphishing Link",
+          "relation": "The initial access vector that most commonly delivers the implant which later establishes this mail-based C2 channel."
+        },
+        {
+          "id": "T1114",
+          "name": "Email Collection",
+          "relation": "Shares the same mailbox-access surface, since an attacker with mail-protocol C2 access frequently also collects the victim's own email content.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "A process other than a known corporate mail client establishes an outbound connection on an SMTP, IMAP, or POP3 port to a webmail provider not used for the organization's business email.",
+        "rationale": "Scope the known-mail-client exclusion list carefully to the organization's actual approved mail stack -- this hunt's entire value collapses if the exclusion list is too broad, since that's precisely where a webmail-based implant will hide."
+      }
+    },
+    {
+      "id": "T1071.004",
+      "name": "DNS",
+      "tactic": "TA0011",
+      "tactic_name": "Command and Control",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1071/004/",
+      "overview": "Adversaries tunnel or beacon C2 traffic through DNS queries and responses — encoding commands and results in subdomain labels or TXT/A/AAAA record data — exploiting the fact that DNS resolution is almost universally permitted outbound before any authentication or network policy even applies, and is rarely inspected with the same scrutiny as HTTP or mail traffic. SUNBURST's use of DNS to mimic legitimate SolarWinds API traffic during a supply-chain compromise remains one of the clearest illustrations of how effectively this channel can hide in plain sight inside traffic nobody expected to be malicious.",
+      "concepts": [
+        {
+          "term": "DNS is allowed before identity, which is exactly the point",
+          "explanation": "A network's authentication and access-control stack typically governs application-layer access, but DNS resolution has to work before any of that even engages — a host needs to resolve a hostname before it can open the TCP connection an ACL might otherwise block. That makes DNS one of the few protocols reliably permitted outbound from nearly any network position, including highly segmented environments, which is precisely why it survives as a viable C2 channel even in networks that have locked down HTTP/S egress tightly."
+        },
+        {
+          "term": "Encoding overhead makes DNS C2 identifiable by shape, not just content",
+          "explanation": "DNS labels have strict length limits (63 characters per label, 253 total), so tunneling any meaningful volume of data requires either very frequent queries or long, high-entropy subdomain strings that look nothing like a normal hostname a human or application would ever request. This produces a statistically distinctive shape — unusually long labels, high character entropy, unusual query-type distribution (heavy TXT record use is rare in normal traffic) — that's detectable independent of knowing anything about the specific malware family generating it."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT34 (OilRig)",
+          "activity": "Used the BONDUPDATER malware to tunnel command-and-control communications through DNS TXT records."
+        },
+        {
+          "actor": "FIN7",
+          "activity": "Conducted C2 via A, OPT, and TXT DNS record types as part of its post-compromise toolkit."
+        },
+        {
+          "actor": "APT41",
+          "activity": "Used DNS-based command-and-control infrastructure across multiple espionage and financially-motivated intrusion campaigns."
+        },
+        {
+          "actor": "SUNBURST (APT29 / SolarWinds Compromise)",
+          "activity": "Used DNS to establish command-and-control while mimicking the structure of legitimate SolarWinds Orion API traffic."
+        },
+        {
+          "actor": "InvisiMole",
+          "activity": "Implemented a custom DNS tunneling protocol to embed command-and-control communications directly within DNS requests."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "DNS query logs",
+          "detail": "Queries with unusually long or high-entropy subdomain labels, an abnormal proportion of TXT-record queries relative to the environment's baseline, or high query frequency to a single parent domain."
+        },
+        {
+          "source": "Sysmon Event 22 (DNS Query)",
+          "detail": "DNS resolution requests initiated by a process that has no legitimate reason to perform its own DNS lookups directly (PowerShell, rundll32, a custom binary bypassing the OS resolver cache pattern)."
+        },
+        {
+          "source": "Passive DNS / threat intelligence",
+          "detail": "The queried parent domain's registration age, hosting history, and any prior association with known DNS-tunneling infrastructure."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "High-Entropy, High-Frequency DNS Queries to a Single Parent Domain",
+          "description": "Surfaces hosts issuing an unusually high volume of DNS queries with long, high-entropy subdomain labels against one parent domain, the core DNS-tunneling signature.",
+          "query": "DnsEvents\n| extend Label = tostring(split(Name, \".\")[0])\n| extend LabelLength = strlen(Label)\n| where LabelLength > 40\n| summarize QueryCount = count(), AvgLabelLen = avg(LabelLength) by ClientIP, ParentDomain = strcat_array(array_slice(split(Name, \".\"), 1, -1), \".\")\n| where QueryCount > 50\n| order by QueryCount desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "Process Directly Issuing DNS TXT Record Queries",
+          "description": "Flags a scripting or non-standard process directly issuing DNS TXT record queries, a pattern rare in legitimate application traffic but common in DNS-tunneling C2.",
+          "query": "title: Suspicious Process Issuing DNS TXT Queries\nid: 8e2f6a4c-9d3b-4e7a-8c1f-3d6b9a2e4f70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: dns_query\n  product: windows\ndetection:\n  selection:\n    QueryType: 'TXT'\n    Image|endswith:\n      - '\\powershell.exe'\n      - '\\rundll32.exe'\n      - '\\python.exe'\n  condition: selection\nfalsepositives:\n  - Legitimate administrative or monitoring scripts that query TXT records for SPF/DKIM validation or service-discovery purposes\nlevel: medium\ntags:\n  - attack.command_and_control\n  - attack.t1071.004\n  - attack.exfiltration"
+        }
+      ],
+      "false_positives": [
+        "Content delivery networks and cloud services that legitimately use long, encoded subdomain labels for routing or load-balancing purposes",
+        "Email security and anti-spam infrastructure performing legitimate SPF/DKIM/DMARC TXT record lookups at high volume",
+        "Legitimate DNS-based service discovery or configuration-distribution mechanisms used by some enterprise software"
+      ],
+      "response_steps": [
+        "Sinkhole the parent domain at the internal DNS resolver level to cut off the C2 channel without necessarily alerting the adversary that the specific host was identified",
+        "Capture full DNS query logs for the affected host across the suspected compromise window to reconstruct command history from the encoded subdomain data",
+        "Identify the process responsible for generating the queries and treat the host as compromised pending full investigation",
+        "Check egress and internal DNS forwarding configuration for any gaps that allowed the query to bypass expected DNS logging/filtering"
+      ],
+      "mitigations": [
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Restrict DNS resolution to an internal, logged resolver only; block direct outbound DNS (port 53) from general-purpose endpoints to external resolvers."
+        },
+        {
+          "id": "M1031",
+          "name": "Network Intrusion Prevention",
+          "detail": "Deploy DNS-specific detection for known tunneling tool signatures and anomalous query-length/entropy patterns."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1071.001",
+          "name": "Web Protocols",
+          "relation": "Frequently used as a fallback channel if DNS-based C2 is blocked, or vice versa, as part of a multi-protocol implant's resilience design."
+        },
+        {
+          "id": "T1568",
+          "name": "Dynamic Resolution",
+          "relation": "Often paired with DNS-based C2 to rotate the parent domain itself, compounding domain-reputation evasion with protocol-level blending.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "A host issues more than fifty DNS queries within an hour against a single parent domain, where the queried subdomain labels average over 40 characters in length.",
+        "rationale": "Exclude known CDN and email-authentication infrastructure domains up front -- both legitimately produce long encoded labels at volume, and without the exclusion list this hunt returns mostly infrastructure noise instead of genuine tunneling candidates."
+      }
+    },
+    {
+      "id": "T1071.005",
+      "name": "Publish/Subscribe Protocols",
+      "tactic": "TA0011",
+      "tactic_name": "Command and Control",
+      "platforms": ["Windows", "Linux", "macOS", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1071/005/",
+      "overview": "Adversaries use broker-based publish/subscribe protocols — MQTT, XMPP, AMQP, or STOMP — to route C2 traffic through a centralized message broker rather than connecting directly to attacker infrastructure, which is a comparatively young and under-monitored sub-technique in most enterprise detection stacks, since these protocols are far more common in IoT and OT environments than in traditional corporate networks. GLOOXMAIL's use of the Jabber/XMPP protocol to communicate with Google-operated infrastructure remains the clearest documented real-world example of the pattern.",
+      "concepts": [
+        {
+          "term": "The broker itself is the evasion, not just the protocol",
+          "explanation": "Unlike a direct C2 connection where the implant talks straight to attacker infrastructure, a pub/sub architecture routes traffic through a message broker — which may be a legitimate, shared, cloud-hosted service — meaning the implant never directly connects to anything an analyst would recognize as attacker-owned. The broker's own reputation (especially if it's a well-known managed MQTT/XMPP service) absorbs the same domain-reputation benefit that mail-protocol C2 gets from using Gmail, compounding the evasion further with topic-based indirection: the implant subscribes to a topic, and the attacker publishes commands to that topic from anywhere, with no direct network relationship between the two ever visible."
+        },
+        {
+          "term": "IoT/OT convergence makes this sub-technique a growing rather than niche concern",
+          "explanation": "MQTT in particular is the dominant messaging protocol in industrial IoT and building-automation deployments specifically because it's lightweight and broker-mediated — which means networks that have historically had zero visibility into this protocol family (because it was assumed to be confined to OT segments) are increasingly exposed as IT/OT network convergence continues. A detection program that has never once looked at MQTT traffic is not evidence the protocol is unused in that environment; it's evidence of a monitoring gap."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "GLOOXMAIL",
+          "activity": "Communicated with Google-operated servers using the Jabber/XMPP protocol to establish command-and-control channels that blended with legitimate Google infrastructure traffic."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Network flow / firewall logs",
+          "detail": "Outbound connections on MQTT's standard ports (1883, 8883) or XMPP ports (5222, 5223) from hosts with no legitimate IoT/messaging application installed."
+        },
+        {
+          "source": "Process command-line logging",
+          "detail": "Non-standard processes (PowerShell, Python scripts, custom binaries) establishing pub/sub broker connections rather than a recognized MQTT/XMPP client application."
+        },
+        {
+          "source": "Broker-side access logs (if available)",
+          "detail": "Unusual topic subscription patterns, high-frequency publish activity, or client connections from IP ranges inconsistent with the broker's expected device population."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Non-Standard Process Connecting to MQTT or XMPP Ports",
+          "description": "Flags a scripting or unrecognized process establishing an outbound connection on standard MQTT or XMPP ports, unusual outside dedicated IoT/messaging client applications.",
+          "query": "title: Unexpected Process on MQTT-XMPP Ports\nid: 4b7d9a3e-5c8f-4d2a-9e6b-7c3f9a5d8b20\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  selection:\n    DestinationPort:\n      - 1883\n      - 8883\n      - 5222\n      - 5223\n  filter_known:\n    Image|endswith:\n      - '\\mosquitto.exe'\n      - '\\node.exe'\n  condition: selection and not filter_known\nfalsepositives:\n  - Legitimate IoT gateway or building-automation software running on a general-purpose endpoint rather than a dedicated appliance\nlevel: medium\ntags:\n  - attack.command_and_control\n  - attack.t1071.005"
+        },
+        {
+          "language": "KQL",
+          "title": "Endpoint Establishing Pub/Sub Broker Connection With No Installed Messaging Application",
+          "description": "Correlates a network connection on MQTT/XMPP ports with the absence of any known messaging or IoT client software installed on the same device.",
+          "query": "DeviceNetworkEvents\n| where RemotePort in (1883, 8883, 5222, 5223)\n| join kind=leftanti (\n    DeviceTvmSoftwareInventory\n    | where SoftwareName has_any (\"mosquitto\", \"paho\", \"openfire\", \"ejabberd\")\n) on DeviceId\n| project Timestamp, DeviceId, RemoteIP, RemotePort, InitiatingProcessFileName"
+        }
+      ],
+      "false_positives": [
+        "Legitimate IoT gateway, building-automation, or industrial-monitoring software running on a general-purpose endpoint",
+        "Development or testing environments intentionally running MQTT/XMPP brokers or clients for application development",
+        "Chat/collaboration platforms that use XMPP as an underlying transport for legitimate business messaging"
+      ],
+      "response_steps": [
+        "Identify the specific broker and topic the implant is using, and work with the broker operator (if third-party) to disable the account or topic",
+        "Capture any accessible broker-side logs to reconstruct the command and exfiltration history before the topic is torn down",
+        "Isolate the affected host and check for any legitimate business justification for pub/sub protocol usage on that specific device class",
+        "Block the broker's IP/domain at the firewall if it is not needed for any legitimate business function in the environment"
+      ],
+      "mitigations": [
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Restrict outbound MQTT/XMPP traffic to only documented, business-justified endpoints and broker services; block by default on general-purpose IT subnets."
+        },
+        {
+          "id": "M1031",
+          "name": "Network Intrusion Prevention",
+          "detail": "Deploy detection signatures for known malicious use of publish/subscribe protocols and unauthorized broker connections."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1071.001",
+          "name": "Web Protocols",
+          "relation": "Many pub/sub broker implementations tunnel over WebSockets on top of standard web ports, blurring the line between this sub-technique and standard HTTP/S C2."
+        },
+        {
+          "id": "T1053.007",
+          "name": "Container Orchestration Job",
+          "relation": "IoT/OT and containerized microservice environments both increasingly rely on message-broker architectures, giving an adversary already present in one a plausible reason to blend into the other."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A general-purpose IT endpoint, with no recognized MQTT or XMPP client software installed, establishes an outbound connection on port 1883, 8883, 5222, or 5223.",
+        "rationale": "Confirm the software-inventory exclusion source is actually current before trusting a clean result -- this hunt is only as good as the installed-software baseline it's joined against, and a stale inventory will silently suppress genuine hits alongside the false ones."
+      }
+    }
+  ]
+}

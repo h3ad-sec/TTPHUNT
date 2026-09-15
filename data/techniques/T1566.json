@@ -1,0 +1,484 @@
+{
+  "id": "T1566",
+  "name": "Phishing",
+  "tactic": "TA0001",
+  "tactic_name": "Initial Access",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "Office Suite",
+    "SaaS",
+    "Identity Provider"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1566/",
+  "overview": "Phishing is electronically or verbally delivered social engineering aimed at getting a human to do the work an exploit would otherwise have to do: open a file, click a link, read out an MFA code, or run a script an attacker sends them. It remains the single most common initial access vector in the industry precisely because it doesn't need a vulnerability at all — it needs one distracted or trusting person, and every organization has thousands of those. The four sub-techniques below split by delivery channel — email attachment, email link, third-party service, and voice call — because each one lands on a different data source and defeats a different set of controls, even though the underlying social-engineering playbook (urgency, authority, familiarity) barely changes between them.",
+  "prerequisite_concepts": [
+    {
+      "term": "Why phishing outcompetes exploit development",
+      "explanation": "A zero-day costs time, money, and expertise to find, weaponize, and keep working before it's patched or burned. A phishing email costs almost nothing to send at scale, and its success rate depends on human attention span rather than software patching cadence — which is why even nation-state groups with genuine zero-day capability still open the overwhelming majority of their intrusions with a phishing message. The technique isn't a fallback for less-resourced actors; it's usually the rational first move for everyone, reserving expensive exploits for the harder problem of moving laterally afterward."
+    },
+    {
+      "term": "The pretext is the payload",
+      "explanation": "Every sub-technique here is a delivery mechanism for the same underlying con: a fabricated reason the target should act immediately without stopping to verify. A fake invoice, a fake HR policy update, a fake IT support call, a fake job offer on LinkedIn — the file format or channel changes, but the psychological lever (urgency, authority, curiosity, fear of missing a deadline) is doing the actual work. Detection built purely around file/link inspection will always be one pretext behind; detection built around the behavioral chain that follows a click holds up regardless of which lure was used."
+    },
+    {
+      "term": "Why detection has to live downstream of the click",
+      "explanation": "A well-crafted phishing message is, by design, difficult to distinguish from legitimate correspondence at the mail-gateway level — that's the entire point of a targeted (spear-) phishing campaign as opposed to a mass spam blast. The reliable place to catch it is not the inbox, it's the behavior chain that follows a successful click: an Office application spawning PowerShell, a browser downloading an executable from a domain registered days ago, an OAuth consent grant immediately following a suspicious sign-in. Every detection strategy in this pack correlates an upstream delivery signal with a downstream execution or authentication signal, because neither one alone is reliable."
+    },
+    {
+      "term": "MFA raises the bar but doesn't remove phishing from the picture",
+      "explanation": "Phishing didn't get less relevant once MFA adoption increased — it adapted. Adversary-in-the-middle phishing kits (Evilginx-style reverse proxies) sit between the victim and the real login page, relaying the MFA challenge in real time and stealing the resulting session token rather than just a password. Device-code and OAuth consent phishing skip credential theft entirely, tricking the user into directly authorizing attacker access. The throughline for this whole pack: phishing's target has shifted from 'the password' to 'whatever the user is willing to hand over or approve in the moment,' which now includes tokens, consent grants, and even a live voice call."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1566.001",
+      "name": "Spearphishing Attachment",
+      "tactic": "TA0001",
+      "tactic_name": "Initial Access",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1566/001/",
+      "overview": "Adversaries send targeted emails with a malicious file attached — a macro-enabled Office document, a password-protected archive, an LNK file, or a disguised executable — betting that the recipient will open it without a second thought. Password-protecting the archive and providing the password in the email body is a common and effective evasion move on its own: the email gateway that scans attachments for malicious content can't open an encrypted archive to see what's inside it, so the file sails through exactly the control that was supposed to stop it.",
+      "concepts": [
+        {
+          "term": "The password-protected archive trick defeats scanning by design, not by accident",
+          "explanation": "An email security gateway that inspects attachment contents needs to actually open the file. A ZIP or RAR encrypted with a password the attacker provides in the email body itself is opaque to that gateway — there's no content to scan until a human, not the gateway, supplies the password. This isn't a gap in the scanning technology; it's a structural blind spot that exists as long as gateways can't guess arbitrary passwords, which means detection has to shift to what happens after the archive is opened and its contents run, not whether the archive itself looked suspicious."
+        },
+        {
+          "term": "Macro execution is still doing most of the work here",
+          "explanation": "Despite years of vendor hardening (Microsoft blocking macros from internet-sourced documents by default since 2022), template injection, remote template loading, and XLM (Excel 4.0) macros continue to give attackers a path to code execution from inside a document that looks like ordinary business content. The hunt value in Office-application-spawns-child-process detection comes precisely from how rarely a legitimate Word or Excel session should ever launch PowerShell, cmd, or mshta on its own."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT28",
+          "activity": "Delivered malicious Microsoft Office and RAR attachments as an initial access vector across multiple campaigns."
+        },
+        {
+          "actor": "Wizard Spider",
+          "activity": "Distributed documents with embedded malicious macros and malicious PDF attachments to deliver TrickBot and related payloads."
+        },
+        {
+          "actor": "TA505",
+          "activity": "Consistently used spearphishing attachments, including password-protected archives, to target financial-sector organizations."
+        },
+        {
+          "actor": "Sandworm Team",
+          "activity": "Obtained initial access into Ukrainian infrastructure targets using malicious Microsoft Office attachments."
+        },
+        {
+          "actor": "Gamaredon Group",
+          "activity": "Sent template-injection documents that retrieved a remote malicious template to bypass static attachment scanning."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Email gateway / mail logs",
+          "detail": "Inbound messages with archive, macro-enabled Office, or LNK-in-archive attachments, especially from newly-seen or spoofed-lookalike sender domains."
+        },
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "An Office application (WINWORD.EXE, EXCEL.EXE, OUTLOOK.EXE) spawning a command interpreter, script host, or LOLBin as a direct child process."
+        },
+        {
+          "source": "Sysmon Event 11 (File Create)",
+          "detail": "Archive extraction or document-dropped executables landing in user-writable paths like %TEMP% or the Downloads folder shortly after an email attachment was opened."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Office Application Spawning Suspicious Child Process",
+          "description": "Flags Word, Excel, PowerPoint, or Outlook directly spawning a command interpreter or script host — the standard signature of a malicious macro or exploited document firing its payload.",
+          "query": "title: Office Application Spawning Command Interpreter\nid: 7d4e2a9c-3f6b-4c8e-9a1d-6f3c8a2e9d70\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_parent:\n    ParentImage|endswith:\n      - '\\WINWORD.EXE'\n      - '\\EXCEL.EXE'\n      - '\\POWERPNT.EXE'\n      - '\\OUTLOOK.EXE'\n  selection_child:\n    Image|endswith:\n      - '\\powershell.exe'\n      - '\\cmd.exe'\n      - '\\wscript.exe'\n      - '\\cscript.exe'\n      - '\\mshta.exe'\n  condition: selection_parent and selection_child\nfalsepositives:\n  - Legitimate mail-merge or line-of-business macros that intentionally call out to a script or interpreter\nlevel: high\ntags:\n  - attack.initial_access\n  - attack.t1566.001\n  - attack.execution\n  - attack.t1204.002"
+        },
+        {
+          "language": "KQL",
+          "title": "Archive Attachment Extraction Followed by Executable Creation",
+          "description": "Correlates a recently-delivered archive attachment with an executable or script file appearing in the user's profile shortly afterward.",
+          "query": "DeviceFileEvents\n| where FolderPath has_any (@\"\\Downloads\\\", @\"\\AppData\\Local\\Temp\\\")\n| where FileName endswith \".exe\" or FileName endswith \".vbs\" or FileName endswith \".lnk\"\n| join kind=inner (\n    EmailAttachmentInfo\n    | where FileType in (\"zip\", \"rar\", \"7z\")\n) on DeviceId\n| where Timestamp between (EmailTimestamp .. EmailTimestamp + 15m)\n| project Timestamp, DeviceId, FileName, FolderPath, SenderFromAddress"
+        }
+      ],
+      "false_positives": [
+        "Legitimate password-protected archives sent by business partners or internal security teams distributing sensitive documents",
+        "Line-of-business Office macros that intentionally shell out to a script for an approved automation workflow",
+        "Software installers packaged as self-extracting archives distributed through approved internal channels"
+      ],
+      "response_steps": [
+        "Identify every recipient of the message across the organization, not just the reporting user — mass-distributed spearphishing rarely targets one mailbox",
+        "Retrieve and detonate the attachment in a sandbox to confirm malicious behavior and extract IOCs (dropped files, C2 domains, process lineage)",
+        "Isolate any host where the attachment was opened and the Office-spawns-child-process pattern fired",
+        "Block the sender domain and any URLs/hashes recovered from the attachment at the email gateway and proxy"
+      ],
+      "mitigations": [
+        {
+          "id": "M1049",
+          "name": "Antivirus/Antimalware",
+          "detail": "Scan and quarantine known-malicious attachments at the gateway; detonate unknown archive/document types in a sandbox before delivery."
+        },
+        {
+          "id": "M1021",
+          "name": "Restrict Web-Based Content",
+          "detail": "Block high-risk attachment types by default (.scr, .exe, .pif, .cpl, .lnk-in-archive) regardless of compression or encryption."
+        },
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Train users to treat unsolicited password-protected archives as a red flag rather than a routine business pattern."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1059.001",
+          "name": "PowerShell",
+          "relation": "The most common execution engine a malicious macro or LNK file hands off to once the attachment is opened.",
+          "external": false
+        },
+        {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information",
+          "relation": "Password-protected/encrypted archives serve the same gateway-evasion purpose this concept describes more generally.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "An Office application spawns a command interpreter, script host, or LOLBin as a direct child process within seconds of a user opening an email attachment delivered in the last hour.",
+        "rationale": "Scope the correlation window tight (minutes, not hours) -- the value of this hunt is the tight temporal link between delivery and execution, and a wide window just reintroduces every legitimate macro-driven workflow you were trying to exclude."
+      }
+    },
+    {
+      "id": "T1566.002",
+      "name": "Spearphishing Link",
+      "tactic": "TA0001",
+      "tactic_name": "Initial Access",
+      "platforms": ["Windows", "Linux", "macOS", "Office Suite", "SaaS", "Identity Provider"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1566/002/",
+      "overview": "Instead of attaching malware directly, adversaries embed a link that leads somewhere they control: a credential-harvesting page cloned from a real login portal, a drive-by exploit page, a direct file download, or increasingly an OAuth consent screen that hands over API access without the victim ever typing a password at all. Hosting the payload externally rather than attaching it sidesteps attachment-scanning gateways entirely, shifting the entire defensive burden onto URL reputation and user judgment at the moment of the click.",
+      "concepts": [
+        {
+          "term": "Adversary-in-the-middle kits break the 'MFA defeats phishing' assumption",
+          "explanation": "A reverse-proxy phishing kit (the Evilginx pattern) sits transparently between the victim and the real identity provider, relaying every request and response — including the MFA challenge — while capturing the resulting session cookie. The victim completes a completely normal-looking login, MFA and all, against what appears to be the legitimate site. The attacker walks away not with a password but with an already-authenticated session token, which is why 'the user has MFA enabled' is not, on its own, a reason to close out a spearphishing-link investigation."
+        },
+        {
+          "term": "OAuth consent phishing and device-code phishing skip credential theft entirely",
+          "explanation": "A link to a real Microsoft or Google consent page, requesting permissions for an attacker-registered application, needs the victim to click 'Accept' — nothing else. Device-code phishing abuses the OAuth device authorization flow by tricking a user into entering a code the attacker generated on their own device, at which point the attacker's session becomes authenticated as the victim. Neither technique ever touches the victim's password, which means password-reset-based remediation does nothing; the fix is revoking the specific grant or device code session."
+        },
+        {
+          "term": "URL and domain obfuscation exploit how humans read, not how browsers parse",
+          "explanation": "IDN homograph domains (visually near-identical characters from other alphabets), userinfo-field tricks (`https://real-bank.com@evil.tld/`), and integer/hex-encoded hostnames all rely on the fact that a rushed human reads the start of a URL and stops, while the browser resolves the whole string differently. This is precisely why user-training mitigations for this sub-technique explicitly caveat that manual URL inspection is unreliable against homographs — the fix leans more on browser/proxy-side protections than on training people to read more carefully."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT29",
+          "activity": "Sent spearphishing emails containing links to password-protected archive files hosted externally."
+        },
+        {
+          "actor": "Lazarus Group",
+          "activity": "Distributed malicious OneDrive links disguised as job offers as part of Operation Dream Job."
+        },
+        {
+          "actor": "APT32",
+          "activity": "Distributed targeted emails containing malicious hyperlinks to compromise victim systems."
+        },
+        {
+          "actor": "FIN7",
+          "activity": "Ran broad phishing campaigns using malicious links hosted on typosquatted domains resembling legitimate services."
+        },
+        {
+          "actor": "Cobalt Group",
+          "activity": "Sent emails containing URLs pointing to malicious documents hosted on external infrastructure."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Email gateway / URL rewrite logs",
+          "detail": "Inbound messages containing links to newly-registered domains, IDN homographs, or URL-shortener redirects."
+        },
+        {
+          "source": "Proxy / web logs",
+          "detail": "A user clicking through to a domain registered within the last 30 days, immediately followed by a credential-form submission or file download."
+        },
+        {
+          "source": "Identity Provider sign-in / consent logs",
+          "detail": "An OAuth consent grant or device-code authorization occurring within minutes of a suspicious inbound email to the same user."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Consent Grant Following Suspicious Inbound Email",
+          "description": "Correlates an OAuth application consent event with a recent inbound email containing a link, surfacing the consent-phishing pattern.",
+          "query": "let SuspiciousMail = EmailUrlInfo\n| where UrlDomain !in (KnownGoodDomainsList)\n| project EmailTimestamp = Timestamp, RecipientEmailAddress, UrlDomain;\nOfficeActivity\n| where Operation == \"Consent to application.\"\n| join kind=inner SuspiciousMail on $left.UserId == $right.RecipientEmailAddress\n| where TimeGenerated between (EmailTimestamp .. EmailTimestamp + 30m)\n| project TimeGenerated, UserId, UrlDomain, Operation"
+        },
+        {
+          "language": "Sigma",
+          "title": "Browser Spawning Script Interpreter After Web Navigation",
+          "description": "Flags a browser process spawning PowerShell, cmd, or mshta shortly after navigating to a URL — consistent with a drive-by or fake-update lure completing.",
+          "query": "title: Browser Spawns Script Interpreter Post-Navigation\nid: 9e5f3b2a-7c4d-4e9a-8b1f-4d7c9a3e5b60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_parent:\n    ParentImage|endswith:\n      - '\\chrome.exe'\n      - '\\msedge.exe'\n      - '\\firefox.exe'\n  selection_child:\n    Image|endswith:\n      - '\\powershell.exe'\n      - '\\mshta.exe'\n      - '\\cmd.exe'\n  condition: selection_parent and selection_child\nfalsepositives:\n  - Browser extensions or enterprise web apps that legitimately launch a local helper script via a registered protocol handler\nlevel: high\ntags:\n  - attack.initial_access\n  - attack.t1566.002\n  - attack.execution"
+        }
+      ],
+      "false_positives": [
+        "Legitimate enterprise SaaS applications requesting OAuth consent as part of normal onboarding",
+        "URL-shortener or link-tracking services used by legitimate marketing and internal communications",
+        "Browser protocol handlers legitimately launching a local application (e.g., a VPN client or ticketing tool) after a web link"
+      ],
+      "response_steps": [
+        "Revoke the OAuth consent grant or device-code session immediately if consent-phishing is confirmed — a password reset alone does not undo it",
+        "Identify every recipient who clicked the link, not just the one who reported it, via email gateway click-tracking logs",
+        "Sinkhole or block the destination domain at the proxy/firewall and submit for reputation blacklisting",
+        "Review the victim account's mailbox rules and forwarding settings for post-compromise persistence artifacts"
+      ],
+      "mitigations": [
+        {
+          "id": "M1054",
+          "name": "Software Configuration",
+          "detail": "Deploy SPF/DKIM/DMARC and browser-level IDN homograph protections; rewrite and detonate URLs at the gateway before delivery."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict end users' ability to grant consent to third-party OAuth applications; require admin approval for new app registrations."
+        },
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Train users on OAuth consent-phishing specifically, since it looks like a legitimate permission prompt rather than a fake login page."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1550.001",
+          "name": "Application Access Token",
+          "relation": "The direct payoff of a successful OAuth consent-phishing link — a persistent token that survives a password reset.",
+          "external": true
+        },
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "relation": "Where a stolen session token or approved consent grant is ultimately used once obtained."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A user grants OAuth consent to an application, or completes a device-code authorization, within 30 minutes of receiving an email containing a link to a domain registered in the last 30 days.",
+        "rationale": "Maintain a short allow-list of known SaaS onboarding domains before running this at scale -- without it, legitimate app-of-the-day rollouts will dominate the result set and bury the handful of genuine consent-phishing hits."
+      }
+    },
+    {
+      "id": "T1566.003",
+      "name": "Spearphishing via Service",
+      "tactic": "TA0001",
+      "tactic_name": "Initial Access",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1566/003/",
+      "overview": "Rather than emailing a corporate inbox, adversaries build rapport through a third-party platform — LinkedIn, WhatsApp, Facebook Messenger, Microsoft Teams, or a niche industry forum — where security controls are weaker and the target's guard is lower because the channel feels personal rather than corporate. The pretext is frequently a fake job opportunity, a fake IT support message, or a supposed mutual industry connection, and the actual malicious content (a link or file) is usually delivered only after several benign messages have established trust.",
+      "concepts": [
+        {
+          "term": "Trust is built before the payload is sent, not at the same time",
+          "explanation": "This is the structural difference from a standard spearphishing email: a LinkedIn recruiter conversation or a WhatsApp exchange typically runs for several messages establishing legitimacy — a real-sounding job description, a plausible company name, casual small talk — before any file or link appears. By the time the malicious content arrives, the target has already built a mental model of the sender as trustworthy, which is precisely why 'don't click links from strangers' training doesn't transfer to this sub-technique: the sender no longer feels like a stranger."
+        },
+        {
+          "term": "Corporate collaboration tools are now a first-class delivery channel, not just social media",
+          "explanation": "Storm-1811's abuse of Microsoft Teams, where the attacker registers a tenant or compromises an external account and messages targets posing as IT support, exploits the fact that Teams is inherently trusted infrastructure inside most organizations — messages from external tenants are frequently allowed by default, and a Teams message doesn't pass through the same email security gateway that would have caught the same pretext delivered by mail. The lesson generalizes: any collaboration platform an organization federates with externally is a phishing channel that traditional email controls have zero visibility into."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Lazarus Group",
+          "activity": "Ran Operation Dream Job, using LinkedIn and Twitter direct messages with fake recruiter personas to deliver malicious job-offer documents."
+        },
+        {
+          "actor": "APT29",
+          "activity": "Leveraged the legitimate mass-mailing service Constant Contact to deliver phishing content that bypassed traditional email reputation checks."
+        },
+        {
+          "actor": "Dark Caracal",
+          "activity": "Conducted spearphishing campaigns over Facebook and WhatsApp to deliver malicious links to targeted individuals."
+        },
+        {
+          "actor": "Storm-1811",
+          "activity": "Impersonated IT support personnel over Microsoft Teams messages to convince victims to grant remote access."
+        },
+        {
+          "actor": "OilRig",
+          "activity": "Sent spearphishing links to targets through LinkedIn messaging as part of a broader social-engineering campaign."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Microsoft Teams / collaboration platform audit logs",
+          "detail": "Inbound messages from external tenants or unfamiliar accounts containing links or requests to run remote-support tooling."
+        },
+        {
+          "source": "Endpoint process telemetry",
+          "detail": "A browser or messaging application spawning a download, followed by execution of an unexpected installer or script shortly after."
+        },
+        {
+          "source": "Network/proxy logs",
+          "detail": "Outbound connections to social media, personal webmail, or messaging-platform domains from corporate endpoints, correlated with a subsequent file download."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "External Teams Message Followed by Remote Support Tool Installation",
+          "description": "Correlates an inbound Microsoft Teams message from an external tenant with the installation of a remote monitoring/management tool shortly afterward on the recipient's device.",
+          "query": "TeamsMessageEvents\n| where SenderTenantId != HomeTenantId\n| project MessageTime = Timestamp, RecipientUPN = RecipientId\n| join kind=inner (\n    DeviceProcessEvents\n    | where FileName has_any (\"AnyDesk.exe\", \"ScreenConnect.exe\", \"TeamViewer.exe\", \"quickassist.exe\")\n) on $left.RecipientUPN == $right.AccountUpn\n| where Timestamp between (MessageTime .. MessageTime + 1h)\n| project MessageTime, RecipientUPN, Timestamp, FileName, DeviceName"
+        },
+        {
+          "language": "Sigma",
+          "title": "Remote Monitoring and Management Tool Installed Outside Change Window",
+          "description": "Flags installation of a common RMM tool not on the organization's approved-tooling list, a frequent follow-on to Teams/voice-based IT-support impersonation.",
+          "query": "title: Unapproved RMM Tool Installation\nid: 2c8f5a3e-9d4b-4c7e-8a1f-5d3c9a4e2f80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\AnyDesk.exe'\n      - '\\ScreenConnect.ClientService.exe'\n      - '\\TeamViewer.exe'\n  filter_approved:\n    Image|contains: 'ApprovedRMMPath'\n  condition: selection and not filter_approved\nfalsepositives:\n  - Legitimate use of an approved remote-support tool by the organization's own help desk\nlevel: medium\ntags:\n  - attack.initial_access\n  - attack.t1566.003"
+        }
+      ],
+      "false_positives": [
+        "Legitimate cross-tenant collaboration with vendors or partner organizations conducted over Teams or similar platforms",
+        "Approved help-desk use of remote monitoring and management tools during a genuine support session",
+        "Recruiting or business-development staff legitimately using LinkedIn/WhatsApp for outreach as part of their job function"
+      ],
+      "response_steps": [
+        "Identify and preserve the full message thread on the third-party platform, since the social-engineering buildup is evidence of the campaign's targeting and sophistication",
+        "Uninstall any remote monitoring/management tool installed as a result of the interaction and rotate any credentials entered during the session",
+        "Restrict or disable external Teams/collaboration-tool messaging tenant-wide if this was the initial vector, pending a policy review",
+        "Report the third-party platform account/profile used by the attacker to that platform's abuse team"
+      ],
+      "mitigations": [
+        {
+          "id": "M1021",
+          "name": "Restrict Web-Based Content",
+          "detail": "Block or restrict access to social media and personal webmail/messaging platforms on corporate endpoints where business need doesn't require it."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict external-tenant messaging in Microsoft Teams (or equivalent) to an explicit allow-list rather than open-by-default."
+        },
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Train staff to verify unsolicited IT-support contact through a known internal channel before acting on instructions received via chat or voice."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1566.004",
+          "name": "Spearphishing Voice",
+          "relation": "Frequently paired with this sub-technique in the same campaign — chat rapport-building followed by a voice call to close the social-engineering loop."
+        },
+        {
+          "id": "T1219",
+          "name": "Remote Access Software",
+          "relation": "The remote monitoring and management tooling this sub-technique's pretext typically convinces the victim to install.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "An account installs a remote monitoring and management tool not on the organization's approved-software list within one hour of receiving a message from an external Teams tenant or unfamiliar collaboration-platform contact.",
+        "rationale": "Build the approved-RMM allow-list first and keep it current -- a stale list is the single biggest source of noise in this hunt, since legitimate help-desk tooling changes more often than security teams expect."
+      }
+    },
+    {
+      "id": "T1566.004",
+      "name": "Spearphishing Voice",
+      "tactic": "TA0001",
+      "tactic_name": "Initial Access",
+      "platforms": ["Windows", "Linux", "macOS", "Identity Provider"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1566/004/",
+      "overview": "Vishing replaces the malicious file or link with a phone call: an adversary impersonating IT support, a help desk, or a vendor talks the victim through installing a remote-access tool, reading out an MFA push notification, or resetting a password over the phone. It has become one of the defining initial-access techniques of the last several years specifically because it routes around every technical control built to catch a malicious email or URL — there is no attachment to sandbox and no link to reputation-check, just a conversation.",
+      "concepts": [
+        {
+          "term": "MFA fatigue and voice social engineering are usually the same attack",
+          "explanation": "The most damaging vishing campaigns don't just ask a victim to reveal a password — they call while simultaneously bombarding the victim's phone with MFA push notifications, then talk the victim through approving one 'to make the calls stop' or 'to verify their identity with IT.' The phone call supplies the social pressure and false authority that a bare MFA-fatigue attack (silent push spam alone) lacks, which is why Scattered Spider and Storm-1811 both pair the technique with a live human caller rather than relying on automated push-bombing by itself."
+        },
+        {
+          "term": "Help-desk impersonation targets the process, not just the person",
+          "explanation": "A sophisticated vishing call often isn't aimed at the end user at all — it's aimed at the organization's own IT help desk, with the attacker posing as a locked-out employee and asking for a password reset or MFA re-enrollment over the phone. This flips the usual phishing model: the 'victim' being socially engineered is the support agent trained to be helpful, and the control that fails is a weak identity-verification step in the help desk's own reset procedure, not a lapse in end-user awareness training."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Scattered Spider",
+          "activity": "Impersonated legitimate IT personnel in phone calls to direct victims to download a remote monitoring and management tool, granting the group remote control of the system."
+        },
+        {
+          "actor": "Storm-1811",
+          "activity": "Initiated voice calls posing as IT support to prompt users to download and execute scripts and remote-access tools, frequently as a precursor to Black Basta ransomware deployment."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Corporate device call logs",
+          "detail": "Unusual inbound numbers, especially ones flagged from prior campaigns or matching known VoIP-spoofing patterns, immediately preceding a security-relevant action by the recipient."
+        },
+        {
+          "source": "Help desk / ITSM ticketing system logs",
+          "detail": "Password reset or MFA re-enrollment requests initiated by phone without the identity-verification step the process requires, or an unusual spike in reset requests in a short window."
+        },
+        {
+          "source": "Identity Provider sign-in and MFA logs",
+          "detail": "An MFA push approval immediately following a burst of push-notification requests, or an MFA method re-registration shortly after a help-desk contact."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "MFA Method Re-Registration Following Help Desk Contact",
+          "description": "Flags an MFA method change or re-enrollment occurring shortly after a help-desk ticket or call, a common vishing-driven account-takeover pattern.",
+          "query": "AuditLogs\n| where OperationName in (\"User registered security info\", \"Admin registered security info\")\n| project TimeGenerated, UserPrincipalName = tostring(TargetResources[0].userPrincipalName)\n| join kind=inner (\n    HelpDeskTickets\n    | where Category == \"Password Reset\" or Category == \"MFA Reset\"\n) on UserPrincipalName\n| where TimeGenerated between (TicketOpenTime .. TicketOpenTime + 2h)\n| project TimeGenerated, UserPrincipalName, TicketOpenTime, TicketId"
+        },
+        {
+          "language": "Sigma",
+          "title": "MFA Push Approval After Rapid Push Burst",
+          "description": "Flags a successful MFA approval that follows an unusually high number of push requests in a short window, consistent with fatigue-attack pressure applied during a vishing call.",
+          "query": "title: MFA Approval Following Push Notification Burst\nid: 5a9d3c7e-2b6f-4d8a-9c1e-7f4b3a9d5c60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: azure\n  service: azuread\ndetection:\n  selection:\n    ResultType: 0\n    AuthenticationMethod: 'Mobile app notification'\n  timeframe: 10m\n  condition: selection | count() by UserPrincipalName > 5\nfalsepositives:\n  - A user genuinely struggling with a poor network connection, causing repeated legitimate push retries\nlevel: medium\ntags:\n  - attack.initial_access\n  - attack.t1566.004\n  - attack.credential_access"
+        }
+      ],
+      "false_positives": [
+        "A user experiencing a poor network connection and retrying a legitimate MFA push notification several times",
+        "Legitimate help-desk-initiated password resets that follow the correct identity-verification procedure but happen to occur close together in time",
+        "New-hire onboarding, where MFA method registration through IT-assisted setup is an expected and routine event"
+      ],
+      "response_steps": [
+        "Immediately revoke the specific MFA method registered or re-enrolled during the suspected vishing window, not just reset the password",
+        "Review the help desk ticket associated with the incident for identity-verification bypass and retrain or restrict the agent's reset authority pending review",
+        "Check for remote monitoring/management tool installation on the affected endpoint and remove it",
+        "Add the caller ID or VoIP number pattern used to an internal indicator list and brief the help desk team on the active campaign"
+      ],
+      "mitigations": [
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Train personnel to identify and report social engineering conducted over phone calls, and to independently verify the identity of any caller claiming to be IT support before acting."
+        },
+        {
+          "id": "M1032",
+          "name": "Multi-factor Authentication",
+          "detail": "Use number-matching or phishing-resistant MFA (FIDO2/WebAuthn) instead of simple push-approval, removing the fatigue-attack vector entirely."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Require strong, callback-based identity verification for any help-desk-initiated password reset or MFA re-enrollment, never accepting caller-asserted identity alone."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1566.003",
+          "name": "Spearphishing via Service",
+          "relation": "Commonly precedes a vishing call in the same campaign, with chat-based rapport-building setting up the phone call that closes the compromise."
+        },
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "relation": "The account tier vishing-driven help-desk social engineering most commonly targets for takeover."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A user's MFA method is re-registered within two hours of a help-desk password-reset or MFA-reset ticket that lacks a documented callback verification step.",
+        "rationale": "Pull the ticketing system's own verification-step field into the join condition rather than trusting ticket closure alone -- a ticket marked resolved doesn't confirm the agent actually performed the callback, and that gap is exactly what this hunt exists to catch."
+      }
+    }
+  ]
+}
