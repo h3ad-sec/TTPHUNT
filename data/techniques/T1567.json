@@ -1,0 +1,405 @@
+{
+  "id": "T1567",
+  "name": "Exfiltration Over Web Service",
+  "tactic": "TA0010",
+  "tactic_name": "Exfiltration",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "ESXi",
+    "Office Suite",
+    "SaaS"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1567/",
+  "overview": "Rather than sending stolen data back over the same C2 channel that delivered the intrusion, adversaries push it out through a legitimate, high-reputation web service the organization already trusts and already has firewall rules permitting — a code repository, a cloud storage provider, a text-paste site, or a webhook endpoint. The appeal is structural: these services already sit inside most egress allow-lists, already use TLS by default, and generate traffic patterns that look identical to normal developer or business activity. The four sub-techniques below split by which category of service gets abused, because each one has a completely different legitimate-use baseline in most organizations and therefore a completely different bar for what counts as anomalous.",
+  "prerequisite_concepts": [
+    {
+      "term": "This technique wins by hiding in a baseline that's already noisy",
+      "explanation": "Nearly every organization with developers already has constant, legitimate traffic to GitHub, GitLab, and cloud storage providers, which means an adversary uploading stolen data to a new or unfamiliar repository/bucket doesn't have to defeat a firewall rule — the traffic was already allowed before the intrusion started. That's the throughline across all four sub-techniques below: none of them require bypassing a technical control, they all require exploiting the fact that the destination category itself is already trusted, which pushes the entire detection burden onto behavioral anomaly (volume, timing, destination novelty) rather than simple allow/deny policy."
+    },
+    {
+      "term": "T1071 (C2 protocols) and T1567 (web-service exfiltration) are frequently the same event viewed from two different data sources",
+      "explanation": "An adversary using a legitimate cloud storage or repository service for exfiltration is, from the network's perspective, generating exactly the kind of HTTP/S traffic T1071.001 already covers — the distinction TTPHUNT draws between the two packs is intent and destination category, not underlying protocol. In practice, a hunt built for T1071.001's beaconing pattern and a hunt built for this pack's destination-reputation pattern should be run together against the same traffic, since a single exfiltration event will frequently satisfy both packs' hypotheses simultaneously."
+    },
+    {
+      "term": "DLP is the one mitigation that actually applies across this whole family",
+      "explanation": "Unlike T1560's archiving techniques, which mostly have no real preventive control, web-service exfiltration is one of the few places in TTPHUNT where a purpose-built preventive technology — Data Loss Prevention tooling that inspects outbound content regardless of destination reputation — has a genuine shot at stopping the technique before data leaves, rather than only detecting it afterward. That's worth noting because it changes the response posture: a DLP alert on one of these channels is closer to a real-time block opportunity than most of the after-the-fact detection queries elsewhere in this tool."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1567.001",
+      "name": "Exfiltration to Code Repository",
+      "tactic": "TA0010",
+      "tactic_name": "Exfiltration",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1567/001/",
+      "overview": "Adversaries upload stolen data to GitHub, GitLab, or similar code-hosting platforms via their API endpoints, betting that an organization full of developers already generating constant legitimate traffic to those exact domains will never think to question one more repository push. The Shai-Hulud npm supply-chain worm's use of curated, keyword-named public repositories to exfiltrate victim data via compromised GitHub accounts is one of the clearest recent examples of this pattern operating at scale.",
+      "concepts": [
+        {
+          "term": "A compromised developer's own GitHub token turns this into an insider-looking event",
+          "explanation": "Because this technique frequently rides an already-compromised developer account's legitimate GitHub credentials or personal access token (as seen in Shai-Hulud and TeamPCP Cloud Stealer), the resulting API activity is authenticated as a real employee, to a service that employee uses constantly for entirely legitimate reasons. That's precisely why destination-repository novelty (a brand-new, never-before-seen repository, especially one made public) is a stronger signal than the mere fact that GitHub API traffic occurred at all — the account and service are both expected; the specific repository is what's new."
+        },
+        {
+          "term": "Public repository creation is a bigger red flag than private",
+          "explanation": "An adversary who wants their own subsequent access to the exfiltrated data doesn't need to make the repository public — a private repo under their control would work fine and stays hidden from casual search. When an adversary does make a data-dump repository public (as Shai-Hulud did with curated, keyword-based naming), it's frequently a deliberate extortion or public-shaming tactic rather than a technical necessity, which makes public repo creation from a corporate account a much higher-priority signal than a private one."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Shai-Hulud",
+          "activity": "Created public repositories with curated, keyword-based naming conventions to exfiltrate victim data through compromised GitHub accounts."
+        },
+        {
+          "actor": "Mini Shai-Hulud",
+          "activity": "Created public repositories using similar curated naming conventions to exfiltrate data from a related but distinct campaign."
+        },
+        {
+          "actor": "TeamPCP Cloud Stealer",
+          "activity": "Leveraged victim GitHub tokens to create repositories and upload stolen credentials within compromised accounts."
+        },
+        {
+          "actor": "Empire",
+          "activity": "Includes a built-in capability to use GitHub as a data-exfiltration channel."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Proxy / web logs",
+          "detail": "HTTPS POST requests to api.github.com or api.gitlab.com originating from a process (PowerShell, curl, Git CLI) immediately following a large local file read."
+        },
+        {
+          "source": "GitHub/GitLab organization audit log",
+          "detail": "New repository creation, especially set to public, by an account with no history of creating repositories, or containing an unusually large single commit shortly after creation."
+        },
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "Git, curl, or scripting processes executing file-packaging commands (tar, gzip) immediately followed by a push/upload operation."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Large File Read Followed by GitHub/GitLab API Upload",
+          "description": "Correlates a large local file read with a subsequent HTTPS POST to a code repository API from the same process, consistent with staged data being pushed out via a code-hosting service.",
+          "query": "DeviceFileEvents\n| where ActionType == \"FileRead\" and FileSize > 20000000\n| project ReadTime=Timestamp, DeviceId, InitiatingProcessId\n| join kind=inner (\n    DeviceNetworkEvents\n    | where RemoteUrl has_any (\"api.github.com\", \"api.gitlab.com\")\n) on DeviceId, InitiatingProcessId\n| where Timestamp between (ReadTime .. ReadTime + 15m)\n| project ReadTime, DeviceId, Timestamp, RemoteUrl, InitiatingProcessFileName"
+        },
+        {
+          "language": "Sigma",
+          "title": "New Public Repository Created by an Account With No Prior Repository History",
+          "description": "Flags GitHub/GitLab organization audit log events showing a first-time repository creation set to public visibility.",
+          "query": "title: First-Time Public Repository Creation\nid: 5f8d3a9c-6e2b-4c7a-9d1f-6e4c9a3d7f60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: github\n  service: audit\ndetection:\n  selection:\n    action: 'repo.create'\n    visibility: 'public'\n  filter_known:\n    actor|in: 'KnownRepoMaintainers'\n  condition: selection and not filter_known\nfalsepositives:\n  - A legitimate developer open-sourcing a new project for the first time under their own account\nlevel: medium\ntags:\n  - attack.exfiltration\n  - attack.t1567.001"
+        }
+      ],
+      "false_positives": [
+        "Legitimate developer activity pushing new code, including a first-time public open-source release",
+        "CI/CD automation that legitimately creates repositories or pushes large build artifacts as part of an approved pipeline",
+        "Legitimate use of Empire or similar red-team frameworks during an authorized penetration test or purple-team exercise"
+      ],
+      "response_steps": [
+        "Identify and, where possible, delete or make private the repository before the data is more widely accessed, and preserve a forensic copy for investigation first",
+        "Revoke the GitHub/GitLab personal access token or OAuth grant used, since it's frequently a stolen or reused credential rather than a newly created adversary account",
+        "Determine the full scope of what was uploaded by reviewing the repository's commit history and file contents",
+        "Notify the platform's abuse/trust-and-safety team to expedite takedown if the repository was made public"
+      ],
+      "mitigations": [
+        {
+          "id": "M1021",
+          "name": "Restrict Web-Based Content",
+          "detail": "Deploy web proxies enforcing policy on which code-repository services and API endpoints are permitted, blocking unauthorized ones outright."
+        },
+        {
+          "id": "M1057",
+          "name": "Data Loss Prevention",
+          "detail": "Inspect outbound content to code-repository APIs for sensitive data patterns regardless of the destination's overall reputation as a trusted service."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1059.006",
+          "name": "Python",
+          "relation": "A common scripting engine used to package and push data to a code repository as part of this technique's execution."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A local file larger than 20 MB is read by a process that, within fifteen minutes, initiates an HTTPS request to a code-repository API endpoint (api.github.com, api.gitlab.com), and that repository was created within the same session.",
+        "rationale": "Weight a first-ever public repository from a given account far higher than a private one -- private repos are the quieter, more common adversary choice, so a public one is either a rare mistake or a deliberate extortion play, and either way it's worth immediate escalation."
+      }
+    },
+    {
+      "id": "T1567.002",
+      "name": "Exfiltration to Cloud Storage",
+      "tactic": "TA0010",
+      "tactic_name": "Exfiltration",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1567/002/",
+      "overview": "Adversaries push stolen data to Dropbox, Google Drive, OneDrive, MEGA, or a directly-owned AWS S3 bucket, most commonly using a general-purpose sync tool like Rclone that supports dozens of cloud backends with a single consistent command syntax. Scattered Spider's documented use of MEGA, Snowflake, and AWS S3 across the same campaign illustrates how this sub-technique is rarely a single-provider bet — adversaries frequently have several cloud-storage destinations queued in case one gets blocked mid-exfiltration.",
+      "concepts": [
+        {
+          "term": "Rclone's popularity with defenders as a legitimate backup tool is exactly why it works for attackers",
+          "explanation": "Rclone is a genuinely useful, widely-adopted open-source tool many organizations already use for legitimate cloud backup and migration, which means its mere presence or execution isn't inherently suspicious the way a bespoke exfiltration tool would be — an adversary running rclone against a ransomware target's file shares looks, on the surface, exactly like an IT admin running a scheduled backup job. The distinguishing signal has to be the destination (an unfamiliar or newly-configured remote) and the timing/volume (a one-time bulk transfer rather than the incremental pattern of a routine backup), not the tool itself."
+        },
+        {
+          "term": "Ransomware double-extortion has made this sub-technique nearly universal in that specific attack category",
+          "explanation": "Modern ransomware operations overwhelmingly exfiltrate a copy of victim data to cloud storage before ever triggering encryption (T1486), specifically to give themselves a second point of leverage — pay for the decryption key, or pay again to prevent public data release. That means any hunt program already watching for T1486's pre-encryption indicators (shadow copy deletion, backup tampering) should treat a large, unusual cloud-storage upload occurring in the same window as part of the same incident, not a separate finding."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Scattered Spider",
+          "activity": "Exfiltrated data to MEGA, Snowflake, and AWS S3 across a documented campaign against multiple victim organizations."
+        },
+        {
+          "actor": "FIN7",
+          "activity": "Used the MEGA cloud storage service to store stolen data as part of its exfiltration workflow."
+        },
+        {
+          "actor": "Lazarus Group",
+          "activity": "Used custom builds of the dbxcli command-line tool specifically for Dropbox-based exfiltration."
+        },
+        {
+          "actor": "Turla",
+          "activity": "Used WebDAV-based uploads along with OneDrive and 4shared for data exfiltration."
+        },
+        {
+          "actor": "Rclone",
+          "activity": "Used broadly across ransomware operations for its native support of Dropbox, Google Drive, S3, and MEGA as exfiltration destinations."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "Execution of rclone.exe or similar sync tools with configuration pointing to a cloud storage remote not previously seen in the environment."
+        },
+        {
+          "source": "Proxy / firewall logs",
+          "detail": "A large, one-time-volume outbound transfer to a cloud storage provider's domain, inconsistent with the incremental pattern of a routine, scheduled backup job."
+        },
+        {
+          "source": "Cloud storage provider audit logs (where available via API integration)",
+          "detail": "New remote/destination configuration, or a bulk upload session, associated with an account or API key not part of documented backup automation."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Rclone or Cloud Sync Tool Execution With Unfamiliar Remote Configuration",
+          "description": "Flags execution of rclone or similar multi-cloud sync tools referencing a configuration profile not present in the organization's documented backup automation.",
+          "query": "title: Cloud Sync Tool With Unapproved Remote\nid: 7c3d9a5e-8f4b-4c6a-9e2d-4c8f9a3e7d60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith: '\\rclone.exe'\n  filter_known:\n    CommandLine|contains: 'ApprovedBackupRemote'\n  condition: selection and not filter_known\nfalsepositives:\n  - Newly onboarded, legitimate backup automation using a remote profile not yet added to the approved-configuration exclusion list\nlevel: high\ntags:\n  - attack.exfiltration\n  - attack.t1567.002"
+        },
+        {
+          "language": "KQL",
+          "title": "Large One-Time Outbound Transfer to Cloud Storage Provider",
+          "description": "Surfaces a bulk, non-incremental outbound transfer to a cloud storage domain, distinguishing a likely exfiltration event from a routine scheduled backup's steady, predictable volume pattern.",
+          "query": "DeviceNetworkEvents\n| where RemoteUrl has_any (\"dropbox.com\", \"mega.nz\", \"drive.google.com\", \"amazonaws.com\")\n| summarize TotalBytes = sum(SentBytes), SessionCount = count() by DeviceId, bin(Timestamp, 1h)\n| where TotalBytes > 500000000 and SessionCount < 5\n| order by TotalBytes desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate, approved backup or data-migration automation using rclone or a similar sync tool against a documented cloud storage remote",
+        "Large legitimate one-time file transfers such as a media production export or a scheduled full (rather than incremental) backup"
+      ],
+      "response_steps": [
+        "Identify the specific cloud storage account/bucket used and, where possible, request provider-side takedown or evidence preservation",
+        "Determine the exact scope of data uploaded by reviewing local file access logs correlated with the upload window",
+        "Check whether this activity coincides with pre-ransomware indicators (T1486) such as shadow copy deletion, since double-extortion campaigns frequently exfiltrate shortly before encrypting",
+        "Rotate any credentials or API keys used for the cloud storage upload if they belonged to a legitimate, compromised service account"
+      ],
+      "mitigations": [
+        {
+          "id": "M1021",
+          "name": "Restrict Web-Based Content",
+          "detail": "Deploy web proxies enforcing which cloud storage services and specific accounts/tenants are permitted for outbound traffic."
+        },
+        {
+          "id": "M1057",
+          "name": "Data Loss Prevention",
+          "detail": "Inspect outbound uploads to cloud storage services for sensitive data patterns, independent of the destination's general reputation."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "relation": "Frequently follows this technique within hours as part of a double-extortion ransomware playbook — exfiltrate first, encrypt second."
+        },
+        {
+          "id": "T1560.001",
+          "name": "Archive via Utility",
+          "relation": "The staging step that typically packages data into a single transferable archive immediately before it gets uploaded via this technique."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A host generates more than 500 MB of outbound traffic to a cloud storage provider (Dropbox, MEGA, Google Drive, S3) in fewer than five sessions within an hour, using a sync-tool configuration not on the approved-backup-remote exclusion list.",
+        "rationale": "Cross-check any hit against recent T1486 pre-encryption indicators before triaging as a standalone finding -- double-extortion ransomware makes this pairing common enough that treating the two as one incident, not two separate tickets, changes both the priority and the response plan."
+      }
+    },
+    {
+      "id": "T1567.003",
+      "name": "Exfiltration to Text Storage Sites",
+      "tactic": "TA0010",
+      "tactic_name": "Exfiltration",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1567/003/",
+      "overview": "Adversaries post stolen data to public text-paste services like Pastebin, relying on the fact that developers use these sites constantly and legitimately to share code snippets, configuration examples, and logs — making one more paste blend into an already-normal traffic pattern. The technique is lower-capacity than cloud storage or code repositories (paste sites are built for text snippets, not bulk binary transfer) but correspondingly faster to use and requires no account setup on many of these services at all.",
+      "concepts": [
+        {
+          "term": "Low capacity per paste means this technique implies smaller, more targeted theft",
+          "explanation": "Because text-paste services are built around small snippets rather than bulk file transfer, an adversary using this specific sub-technique is more likely exfiltrating credentials, configuration secrets, or a short data sample than an entire database — which is a meaningfully different risk profile than the multi-gigabyte transfers typical of cloud-storage exfiltration. That distinction is worth factoring into incident scoping: a hit here points toward 'what specific secret got out' rather than 'how much data got out.'"
+        },
+        {
+          "term": "The dual-purpose nature of these sites (staging C2 code AND exfiltrating data) means context has to disambiguate direction",
+          "explanation": "The same paste-site infrastructure that adversaries use to host a second-stage payload or C2 configuration for download (an inbound-facing use) is also used to receive stolen data (an outbound-facing use) — meaning a hunt has to pay close attention to traffic direction and payload size rather than just flagging any interaction with a known paste-site domain, since blocking or over-alerting on inbound reads to these sites would catch a completely different technique than the one this pack covers."
+        }
+      ],
+      "procedure_examples": [],
+      "data_sources": [
+        {
+          "source": "Proxy / web logs",
+          "detail": "HTTP POST or PUT requests to pastebin-style domains from an unusual process (PowerShell, wscript.exe, an Office application) rather than a normal interactive browser session."
+        },
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "curl or wget invocations posting data to a text-storage domain, especially immediately following a file compression or credential-file read operation."
+        },
+        {
+          "source": "macOS Unified log",
+          "detail": "osascript or clipboard-read activity immediately followed by an HTTPS POST request to a known text-storage domain."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Non-Browser Process Posting to a Text Storage Site",
+          "description": "Flags an HTTP POST/PUT to a known paste-site domain originating from a scripting engine or non-browser process rather than a normal interactive session.",
+          "query": "title: Non-Browser POST to Text Storage Site\nid: 4a8c6d3e-9f2b-4c7a-8e1d-6f3c9a4e8d70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\powershell.exe'\n      - '\\wscript.exe'\n      - '\\curl.exe'\n    DestinationHostname|contains:\n      - 'pastebin.com'\n      - 'paste.ee'\n  condition: selection\nfalsepositives:\n  - Legitimate automation or monitoring scripts that post logs or diagnostic output to an approved paste service as part of a documented workflow\nlevel: medium\ntags:\n  - attack.exfiltration\n  - attack.t1567.003"
+        },
+        {
+          "language": "KQL",
+          "title": "File Read Followed by Outbound POST to Text Storage Domain",
+          "description": "Correlates a sensitive file or credential-store read with a subsequent outbound POST request to a text-storage site from the same process.",
+          "query": "DeviceFileEvents\n| where FolderPath has_any (\"Credentials\", \"\\\\.ssh\\\\\", \"\\\\.aws\\\\\")\n| project ReadTime=Timestamp, DeviceId, InitiatingProcessId\n| join kind=inner (\n    DeviceNetworkEvents\n    | where RemoteUrl has_any (\"pastebin.com\", \"paste.ee\")\n) on DeviceId, InitiatingProcessId\n| where Timestamp between (ReadTime .. ReadTime + 10m)\n| project ReadTime, DeviceId, Timestamp, RemoteUrl"
+        }
+      ],
+      "false_positives": [
+        "Legitimate developer or IT automation that posts logs, error output, or configuration snippets to an approved paste service as part of routine troubleshooting",
+        "Security tooling or monitoring scripts that use a paste service to share diagnostic output between team members by established convention"
+      ],
+      "response_steps": [
+        "Locate and request takedown of the specific paste if it's still accessible, and preserve a copy for investigation before it's removed",
+        "Determine the specific data or credentials involved given the technique's typically smaller, more targeted payload size",
+        "Rotate any credentials or secrets confirmed to be included in the paste immediately, since these are frequently directly usable by anyone who finds the paste",
+        "Trace back to the file read or collection event that produced the data to understand how it was originally accessed"
+      ],
+      "mitigations": [
+        {
+          "id": "M1021",
+          "name": "Restrict Web-Based Content",
+          "detail": "Deploy web proxies enforcing policy on which text-storage services are permitted, blocking unauthorized ones outright."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1552.001",
+          "name": "Credentials In Files",
+          "relation": "A common source of the smaller, targeted data this technique's limited capacity is well-suited to exfiltrate.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "A non-browser process (PowerShell, wscript.exe, curl) posts content to a known text-storage domain within ten minutes of reading a credential store or SSH/cloud configuration directory.",
+        "rationale": "Scope this hunt around credential and secrets directories specifically rather than general file activity -- the technique's low per-paste capacity means the realistic payload is a secret or config snippet, not a bulk data dump, so that's where the correlation window earns its precision."
+      }
+    },
+    {
+      "id": "T1567.004",
+      "name": "Exfiltration Over Webhook",
+      "tactic": "TA0010",
+      "tactic_name": "Exfiltration",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Office Suite", "SaaS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1567/004/",
+      "overview": "Adversaries push stolen data out through a webhook — either a one-time manual POST to an attacker-registered endpoint like webhook.site, or a standing integration wired into a victim's own SaaS platform (Slack, Teams, a ticketing system) that continuously forwards messages, files, or events to an external URL. The 2025 Poland wiper attacks' use of an attacker-controlled Slack channel and the Shai-Hulud npm worm's exfiltration of repository secrets to webhook.site are two structurally different examples of the same underlying mechanism — one abusing a legitimate collaboration platform's own integration feature, the other using a purpose-built webhook-testing service as a low-friction drop point.",
+      "concepts": [
+        {
+          "term": "A standing webhook integration is exfiltration-as-persistence, not a one-time event",
+          "explanation": "The automated-integration variant of this technique — wiring a SaaS platform's own webhook feature to continuously forward new messages, files, or events to an attacker-controlled URL — means the exfiltration doesn't stop after one detected event; it keeps running until the integration itself is found and removed. That's a meaningfully different response posture than a single POST request: finding one webhook exfiltration event should immediately trigger an audit of every webhook/integration configuration across every SaaS platform in the environment, not just remediation of the one instance found."
+        },
+        {
+          "term": "webhook.site and similar testing services are dual-use in the most literal sense",
+          "explanation": "webhook.site exists as a legitimate developer tool for inspecting and debugging outgoing webhook payloads during normal software development — there is no way to distinguish a developer legitimately testing their own integration from an adversary using the exact same service as a disposable data-collection endpoint, based on the destination alone. This is one of the clearest examples in this whole tool of a technique that can only be judged by context (what data is in the payload, whether the calling process/account has any legitimate reason to be testing webhooks) rather than by destination reputation."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "2025 Poland Wiper Attacks (Campaign C0063)",
+          "activity": "Used an attacker-controlled Slack channel, leveraging the platform's own messaging/integration features, for data exfiltration during coordinated infrastructure attacks."
+        },
+        {
+          "actor": "Shai-Hulud",
+          "activity": "Exfiltrated repository secrets from compromised npm packages directly to webhook.site as part of its supply-chain worm propagation."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Proxy / web logs",
+          "detail": "HTTP POST/PUT requests to webhook.site or similar disposable-webhook testing services from an unusual process context (a CI/CD runner, a build script, PowerShell)."
+        },
+        {
+          "source": "SaaS platform (Slack/Teams) admin audit log",
+          "detail": "New incoming or outgoing webhook integration registrations pointing to an external, non-corporate domain, especially if configured by an account with no history of managing integrations."
+        },
+        {
+          "source": "CI/CD pipeline / secrets-manager access logs",
+          "detail": "Access to stored secrets or environment variables immediately followed by an outbound HTTP request to an unfamiliar webhook endpoint."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Outbound POST to Disposable Webhook Testing Service",
+          "description": "Flags outbound requests to common webhook-testing/relay domains, which have essentially no legitimate production use case outside active development and debugging.",
+          "query": "title: Outbound Request to Disposable Webhook Service\nid: 9c4e7a3d-6f8b-4c2a-9e1d-7f3c9a4e6d80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  selection:\n    DestinationHostname|contains:\n      - 'webhook.site'\n      - 'requestbin.com'\n      - 'pipedream.net'\n  condition: selection\nfalsepositives:\n  - Legitimate developer activity testing or debugging an outgoing webhook integration during active development\nlevel: medium\ntags:\n  - attack.exfiltration\n  - attack.t1567.004"
+        },
+        {
+          "language": "KQL",
+          "title": "New SaaS Webhook Integration Pointing to External Domain",
+          "description": "Flags creation of a new webhook or integration configuration in a SaaS collaboration platform's admin audit log, pointing to a domain outside the organization's own infrastructure.",
+          "query": "SaaSAuditLogs\n| where OperationName in (\"IncomingWebhookCreated\", \"OutgoingWebhookCreated\", \"AppIntegrationAdded\")\n| where TargetUrl !has \"corp.internal\"\n| project TimeGenerated, Actor, OperationName, TargetUrl\n| order by TimeGenerated desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate developer or DevOps activity testing an outgoing webhook integration during active software development",
+        "Approved third-party SaaS integrations (monitoring, alerting, ChatOps tooling) that legitimately register webhooks pointing to an external, documented vendor domain"
+      ],
+      "response_steps": [
+        "Immediately audit all webhook and integration configurations across every SaaS platform in the environment, not just the one instance found, since standing integrations persist until manually removed",
+        "Disable or delete the specific malicious webhook/integration and rotate any secrets or tokens that may have been exposed through it",
+        "Determine what data flowed through the integration and for how long it had been active, since a standing integration may have been exfiltrating continuously since creation",
+        "Review which account created the integration and treat that account as potentially compromised if it has no legitimate history of managing integrations"
+      ],
+      "mitigations": [
+        {
+          "id": "M1057",
+          "name": "Data Loss Prevention",
+          "detail": "Deploy DLP solutions capable of detecting and blocking sensitive data uploads to web services, including webhook endpoints, through browsers and other transmission vectors."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1567.001",
+          "name": "Exfiltration to Code Repository",
+          "relation": "Often used alongside this technique in supply-chain-style campaigns, exfiltrating different categories of stolen secrets to each destination in parallel."
+        },
+        {
+          "id": "T1059.007",
+          "name": "JavaScript",
+          "relation": "A common execution context (npm package install scripts, browser-based automation) for the code that actually issues the webhook POST request."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A process posts data to a known disposable webhook-testing domain (webhook.site, requestbin.com, pipedream.net) from a production CI/CD runner or build context with no documented, active development ticket referencing webhook integration work.",
+        "rationale": "Treat a hit from a CI/CD or build context as categorically more serious than one from a developer's own workstation -- production pipeline secrets have a much larger blast radius than a single developer's test credentials, and that context alone should drive triage priority more than the destination itself."
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "generated": "2026-09-15",
-  "count": 12,
+  "count": 14,
   "techniques": [
     {
       "id": "T1003",
@@ -195,6 +195,33 @@
       "file": "techniques/T1486.json",
       "subtechniques": [
         { "id": "T1486", "name": "Data Encrypted for Impact" }
+      ]
+    },
+    {
+      "id": "T1560",
+      "name": "Archive Collected Data",
+      "tactic": "TA0009",
+      "tactic_name": "Collection",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "file": "techniques/T1560.json",
+      "subtechniques": [
+        { "id": "T1560.001", "name": "Archive via Utility" },
+        { "id": "T1560.002", "name": "Archive via Library" },
+        { "id": "T1560.003", "name": "Archive via Custom Method" }
+      ]
+    },
+    {
+      "id": "T1567",
+      "name": "Exfiltration Over Web Service",
+      "tactic": "TA0010",
+      "tactic_name": "Exfiltration",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Office Suite", "SaaS"],
+      "file": "techniques/T1567.json",
+      "subtechniques": [
+        { "id": "T1567.001", "name": "Exfiltration to Code Repository" },
+        { "id": "T1567.002", "name": "Exfiltration to Cloud Storage" },
+        { "id": "T1567.003", "name": "Exfiltration to Text Storage Sites" },
+        { "id": "T1567.004", "name": "Exfiltration Over Webhook" }
       ]
     }
   ]

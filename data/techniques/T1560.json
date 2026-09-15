@@ -1,0 +1,315 @@
+{
+  "id": "T1560",
+  "name": "Archive Collected Data",
+  "tactic": "TA0009",
+  "tactic_name": "Collection",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1560/",
+  "overview": "Before data leaves an environment, it almost always gets compressed and often encrypted first — smaller transfers are faster and less conspicuous, and encryption hides the content from any inspection the exfiltration channel might be subject to. This is the technique that sits directly between collection and exfiltration in the kill chain, which makes it one of the last, cheapest points to catch an intrusion before data actually leaves: an archive full of sensitive files sitting in a staging directory is a confirmed collection event even if the exfiltration attempt that follows gets blocked. The three sub-techniques below split by how the archiving happens — a standalone utility, a linked compression library, or a fully custom algorithm — because each leaves a different forensic signature, from an obvious process invocation down to nothing but a suspicious block of high-entropy bytes on disk.",
+  "prerequisite_concepts": [
+    {
+      "term": "This is a staging event, and staging directories are a reusable hunting concept",
+      "explanation": "An adversary rarely archives data in place across a dozen scattered folders — they collect it into one or a small number of staging locations first, because that's what makes the subsequent exfiltration step manageable. That means the same staging-directory concept used to hunt this technique (a %TEMP%, /tmp, or unusual user-writable path suddenly holding large archive files) is worth checking any time another technique in this tool flags a host as compromised, since it's frequently the first physical evidence that collection, not just access, has already happened."
+    },
+    {
+      "term": "Compression is not the same signal as encryption, and the two sub-techniques below split cleanly on which one dominates",
+      "explanation": "Archive via Utility and Archive via Library both tend to use recognizable formats (.zip, .rar, .7z, .tar.gz) with standard headers, which is exactly what makes them detectable via file-type and header inspection even when the content is also encrypted. Archive via Custom Method exists specifically to avoid that recognizability — a hand-rolled XOR or proprietary cipher produces a file with no standard archive header at all, just a blob of high-entropy bytes, which is why detection for that sub-technique has to pivot entirely to statistical (entropy-based) analysis rather than format recognition."
+    },
+    {
+      "term": "Almost none of this technique family has a real preventive mitigation, which changes the whole pack's posture",
+      "explanation": "Compression and encryption are core, universally-needed system features — you cannot disable zip/tar/gzip without breaking countless legitimate workflows, and MITRE says as much directly for both the library and custom-method sub-techniques. That means this entire pack, more than almost any other in TTPHUNT, lives or dies on detection quality rather than prevention: there's no control to point to that meaningfully closes this door, only a better or worse ability to notice when someone's walking through it."
+        }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1560.001",
+      "name": "Archive via Utility",
+      "tactic": "TA0009",
+      "tactic_name": "Collection",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1560/001/",
+      "overview": "Adversaries reach for a standalone archiving tool — 7-Zip, WinRAR, tar, gzip, or Windows' own makecab/diantz — to compress and often password-protect collected data before moving it out, exactly the same way a legitimate user would package files for transfer. Volt Typhoon's use of multi-volume, password-protected 7-Zip archives specifically to package the NTDS.dit database is a clean illustration of how this sub-technique frequently marks the exact moment a credential-dumping operation (T1003.003) transitions into an exfiltration-ready package.",
+      "concepts": [
+        {
+          "term": "A password on the archive is itself informative, not just an evasion step",
+          "explanation": "Ransomware operators like Akira and Play, and APT groups like APT28, consistently password-protect their staging archives — not primarily to defeat the victim's own defenses (the data's already been collected), but specifically to defeat any automated content-inspection or DLP scanning that might catch the exfiltration attempt at the network boundary. An unexplained password-protected archive being created is therefore a stronger signal than an unprotected one, since a legitimate business archive rarely needs a password specifically to survive network egress inspection."
+        },
+        {
+          "term": "Built-in Windows utilities (makecab, diantz, certutil) let this blend into 'nothing new installed'",
+          "explanation": "An environment that only watches for 7-Zip or WinRAR installation events will miss APT41-style use of makecab.exe/diantz.exe, both of which ship with Windows and require no new binary to appear on disk at all — the entire archiving operation uses tooling that was already there before the intrusion started. This is exactly why detection in this sub-technique has to include native LOLBin-style archiving utilities, not just third-party compression tool installs, mirroring the same LOLBin-hunting discipline TTPHUNT already applies elsewhere (T1059's coverage of living-off-the-land execution)."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Created multi-volume, password-protected 7-Zip archives specifically to package the stolen ntds.dit Active Directory database."
+        },
+        {
+          "actor": "HAFNIUM",
+          "activity": "Compressed stolen Microsoft Exchange Server files using 7-Zip and WinRAR prior to exfiltration."
+        },
+        {
+          "actor": "APT41",
+          "activity": "Used makecab.exe, a native Windows cabinet-archiving utility, to compress collected data and additional downloaded tooling."
+        },
+        {
+          "actor": "Akira",
+          "activity": "Uses WinRAR to archive collected victim data as a standard step before double-extortion data exfiltration."
+        },
+        {
+          "actor": "APT28",
+          "activity": "Used password-protected WinRAR archives and the PowerShell Compress-Archive cmdlet to package collected data."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "Execution of 7z.exe, WinRAR.exe, makecab.exe, diantz.exe, tar, or gzip with command-line arguments consistent with archiving a large or sensitive directory."
+        },
+        {
+          "source": "Sysmon Event 11 (File Create)",
+          "detail": "Creation of archive files (.zip, .rar, .7z, .cab, .tar.gz) in a staging location such as %TEMP%, a user profile directory, or an unusual server path, especially in unusually large or multi-volume sets."
+        },
+        {
+          "source": "PowerShell script block logging",
+          "detail": "Use of the Compress-Archive cmdlet against directories containing sensitive data classifications."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Archiving Utility Invoked Against a Large or Sensitive Directory",
+          "description": "Flags common archiving utilities (including native Windows LOLBins) creating a compressed archive from a directory that isn't the user's own normal working set.",
+          "query": "title: Archiving Utility Creating Suspicious Archive\nid: 3f7c9a5e-6d4b-4c8a-9e1f-6c4d9a3e7f80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\7z.exe'\n      - '\\WinRAR.exe'\n      - '\\makecab.exe'\n      - '\\diantz.exe'\n  selection_flags:\n    CommandLine|contains:\n      - '-p'\n      - '/p'\n  condition: selection and selection_flags\nfalsepositives:\n  - Legitimate IT or backup staff creating password-protected archives for authorized data transfer\nlevel: medium\ntags:\n  - attack.collection\n  - attack.t1560.001"
+        },
+        {
+          "language": "KQL",
+          "title": "Large or Multi-Volume Archive Created in a Staging-Like Path",
+          "description": "Surfaces newly created archive files in temp or user-writable directories at a size or volume-count consistent with a staged exfiltration package.",
+          "query": "DeviceFileEvents\n| where FileName endswith \".zip\" or FileName endswith \".rar\" or FileName endswith \".7z\"\n| where FolderPath has_any (@\"\\Temp\\\", @\"\\AppData\\Local\\Temp\\\")\n| where FileSize > 50000000\n| project Timestamp, DeviceId, FolderPath, FileName, FileSize, InitiatingProcessFileName"
+        }
+      ],
+      "false_positives": [
+        "Legitimate IT or backup operations creating password-protected archives as part of an approved data-transfer or backup workflow",
+        "Software packaging or build pipelines that legitimately produce compressed cabinet or archive files using the same native utilities",
+        "End users legitimately archiving their own large files (media, project folders) for personal storage or transfer"
+      ],
+      "response_steps": [
+        "Locate and preserve the archive before it can be deleted, since its contents define the actual scope of what was collected",
+        "Identify the source directories the archive was built from to determine what specific data classification was involved",
+        "Check whether the archive was subsequently transmitted anywhere (network egress, cloud upload, removable media) to determine if exfiltration completed or was interrupted",
+        "Treat any password on the archive as a deliberate DLP-evasion signal and prioritize the finding accordingly"
+      ],
+      "mitigations": [
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Regularly scan endpoints for the presence of unauthorized archiving utilities to reduce the toolset available for staging."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1003.003",
+          "name": "NTDS",
+          "relation": "A common data source that gets archived using this technique immediately after extraction, given the size and sensitivity of the resulting database file."
+        },
+        {
+          "id": "T1567.002",
+          "name": "Exfiltration to Cloud Storage",
+          "relation": "The typical next step once data has been archived here — uploading the staged package to an external cloud storage service."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A password-protected archive file larger than 50 MB is created in a temp or user-writable directory by 7z.exe, WinRAR.exe, makecab.exe, or diantz.exe, outside a documented backup or data-transfer workflow.",
+        "rationale": "Weight the password-protection flag heavily in your triage priority -- a legitimate business archive rarely needs a password specifically to survive DLP inspection, so that single attribute does more to separate signal from noise here than the size threshold alone."
+      }
+    },
+    {
+      "id": "T1560.002",
+      "name": "Archive via Library",
+      "tactic": "TA0009",
+      "tactic_name": "Collection",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1560/002/",
+      "overview": "Instead of shelling out to a standalone archiving tool, adversaries link a compression library directly into their own malware — zlib, bzip2, libzip, Python's rarfile — so the archiving happens inside the malicious process itself with no separate archiving-utility process ever appearing in the process tree at all. Lazarus Group's pattern of compressing stolen data with zlib, encrypting it, and uploading straight to C2 infrastructure is the canonical example: from an endpoint's perspective, there's no `7z.exe` invocation to catch, just a single unfamiliar process quietly producing and transmitting a compressed blob.",
+      "concepts": [
+        {
+          "term": "No new process means detection has to shift from 'what ran' to 'what a process is doing'",
+          "explanation": "Because the compression logic lives inside the malware's own binary or interpreter session rather than a separate spawned utility, process-creation-based detection (which works well for Archive via Utility) is largely blind to this sub-technique. The signal instead has to come from module/library loading (a Python process suddenly loading the rarfile module, a .NET binary loading GZipStream) or from the resulting file artifact itself — which is exactly why this sub-technique's detection strategies lean so heavily on DLL/module load correlation rather than command-line inspection."
+        },
+        {
+          "term": "This sub-technique explicitly has no real preventive mitigation, by MITRE's own account",
+          "explanation": "Compression libraries are fundamental, widely-used legitimate functionality embedded in an enormous range of software — Python, .NET, Swift, and virtually every scripting language ship with one built in or trivially available. There's no meaningful way to block 'linking a compression library' without breaking a huge swath of legitimate software, which is why detection quality (module-load correlation with subsequent archive creation) carries the entire defensive weight for this specific sub-technique."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Lazarus Group",
+          "activity": "Compressed victim information using Zlib, encrypted the resulting archive, then uploaded it directly to command-and-control infrastructure from within the malware process itself."
+        },
+        {
+          "actor": "Turla (Epic)",
+          "activity": "Compressed collected data with bzip2 before transmission to command-and-control servers."
+        },
+        {
+          "actor": "FoggyWeb",
+          "activity": "Invoked the .NET GZipStream compression class via internal Common.Compress methods rather than an external archiving process."
+        },
+        {
+          "actor": "ShinyHunters",
+          "activity": "Used zstd compression directly (`zstd -3 -T0 -o exfil.tar.zst`) to prepare data for exfiltration."
+        },
+        {
+          "actor": "Threat Group-3390",
+          "activity": "Leveraged RAR library functionality to compress, encrypt, and password-protect exfiltrated files."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Process module/library load events",
+          "detail": "A Python, PowerShell, or .NET process loading a compression library (zlib, libzip, rarfile, GZipStream) that isn't part of that process's normal, expected module set."
+        },
+        {
+          "source": "macOS Unified log",
+          "detail": "Swift or Objective-C applications loading libz/libarchive and subsequently creating compressed or encrypted output files."
+        },
+        {
+          "source": "File creation events",
+          "detail": "Compressed or encrypted files appearing in /tmp or a user directory with no corresponding archiving-utility process in the immediate process tree."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Scripting Process Loading Compression Library Followed by Archive Creation",
+          "description": "Flags a Python, PowerShell, or .NET process loading a compression-related module shortly before creating a compressed file, with no separate archiving utility process involved.",
+          "query": "title: Compression Library Loaded by Scripting Process\nid: 8e2f6a4c-9d3b-4e7a-8c1f-3d6b9a2e4f70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: image_load\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\python.exe'\n      - '\\powershell.exe'\n    ImageLoaded|contains:\n      - 'zlib'\n      - 'libzip'\n      - 'rarfile'\n  condition: selection\nfalsepositives:\n  - Legitimate applications and scripts that use compression libraries for entirely benign purposes such as log rotation or data serialization\nlevel: low\ntags:\n  - attack.collection\n  - attack.t1560.002"
+        },
+        {
+          "language": "KQL",
+          "title": "Compressed File Created With No Corresponding Archiving Process in Lineage",
+          "description": "Surfaces compressed file creation where the initiating process is not a recognized archiving utility, consistent with in-process library-based compression.",
+          "query": "DeviceFileEvents\n| where FileName endswith \".gz\" or FileName endswith \".zst\" or FileName endswith \".bz2\"\n| where InitiatingProcessFileName !in (\"7z.exe\", \"WinRAR.exe\", \"tar\", \"gzip\")\n| project Timestamp, DeviceId, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessCommandLine"
+        }
+      ],
+      "false_positives": [
+        "Legitimate applications and automation scripts using compression libraries for benign purposes such as log rotation, backup, or data serialization",
+        "Development and build tooling that routinely loads compression libraries as part of packaging software artifacts"
+      ],
+      "response_steps": [
+        "Identify the specific process and its full behavior, since the absence of a separate archiving utility means the compression is one step in a larger custom malware routine worth fully reverse engineering",
+        "Recover and analyze any resulting compressed file to determine what data was staged",
+        "Check for network activity immediately following the compression event, since in-process archiving frequently precedes immediate upload without any intermediate staging period",
+        "Treat this finding as evidence of custom or semi-custom malware rather than an off-the-shelf tool, and prioritize IOC extraction accordingly"
+      ],
+      "mitigations": [],
+      "related": [
+        {
+          "id": "T1071.001",
+          "name": "Web Protocols",
+          "relation": "The C2 channel that frequently receives the compressed output directly from within the same process, without an intermediate file ever touching disk in a recoverable state."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A Python, PowerShell, or .NET process loads a compression-related library or module and subsequently creates a compressed output file, where that process is not a recognized standalone archiving utility.",
+        "rationale": "This hunt has no fallback preventive control per MITRE's own guidance, so invest disproportionately in tuning the false-positive exclusion list against your environment's legitimate scripting and automation baseline rather than expecting a policy control to reduce the volume for you."
+      }
+    },
+    {
+      "id": "T1560.003",
+      "name": "Archive via Custom Method",
+      "tactic": "TA0009",
+      "tactic_name": "Collection",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1560/003/",
+      "overview": "Some adversaries skip both standard utilities and standard libraries entirely, implementing their own compression or encryption from scratch — a hand-rolled XOR loop, a custom stream cipher, a proprietary Lempel-Ziv variant — specifically to avoid producing a file that any standard archive-format signature would recognize. Stuxnet's static 31-byte XOR key and FIN6's layered substitution-cipher-plus-XOR-plus-Base64 scheme are both examples of the same underlying goal: produce an output file that looks like nothing a defender's tooling has a name for.",
+      "concepts": [
+        {
+          "term": "Losing the standard header is the whole point, and entropy is what's left to detect on",
+          "explanation": "A .zip or .7z file has a recognizable magic-byte header regardless of what's inside it, which is exactly what a custom method is built to avoid — a hand-XORed blob has no such header, no format signature, nothing a file-type scanner can name. What remains detectable is a purely statistical property: genuinely random-looking (high-entropy) data is itself unusual for most legitimate file types, so a script or binary producing high-entropy output with no standard archive signature is the residual signal this sub-technique can't fully escape, even though it defeats every format-based detection method the other two sub-techniques rely on."
+        },
+        {
+          "term": "The absence of library/utility artifacts is itself informative once you're specifically looking for it",
+          "explanation": "If a hunt has already ruled out both a recognized archiving utility (T1560.001) and a known compression library load (T1560.002), but a process is still producing compressed-looking, high-entropy output, that absence is the confirming detail for this sub-technique rather than a dead end — it means whatever is happening was deliberately custom-built specifically to avoid the two more common, more detectable paths, which itself implies a more capable or more determined adversary than one relying on off-the-shelf tooling."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Stuxnet",
+          "activity": "Used a static 31-byte XOR key to encrypt data before transmission to its command-and-control infrastructure."
+        },
+        {
+          "actor": "FIN6",
+          "activity": "Layered a substitution cipher, XOR encoding with a fixed key, and Base64 permutation across multiple encoding schemes applied to victim data."
+        },
+        {
+          "actor": "Duqu",
+          "activity": "Staged data using compression followed by XOR encryption via its own modules rather than a standard library or utility."
+        },
+        {
+          "actor": "Attor",
+          "activity": "Encrypted collected data using a custom Blowfish and RSA implementation rather than a standard cryptographic library."
+        },
+        {
+          "actor": "Agent.btz",
+          "activity": "Used XOR encoding to encrypt collected system information stored in XML files."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "File entropy analysis",
+          "detail": "Newly created files exhibiting high statistical entropy with no recognizable standard archive or encryption format header."
+        },
+        {
+          "source": "Process execution with cryptographic API usage",
+          "detail": "A script or binary invoking bitwise/XOR operations or CryptoAPI calls that don't correspond to any standard, recognized library usage."
+        },
+        {
+          "source": "Sysmon Event 11 (File Create)",
+          "detail": "File creation in a staging directory where the resulting file has no standard extension or magic-byte signature consistent with any known archive format."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "High-Entropy File Creation Without Standard Archive Header",
+          "description": "Flags files created in staging-like directories that exhibit high entropy but lack any recognized standard compression or archive format signature.",
+          "query": "title: High-Entropy File Without Standard Archive Signature\nid: 1d6a9c4e-7f3b-4c8a-9e2d-6f4c9a3e7d10\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: windows\ndetection:\n  selection:\n    TargetFilename|contains:\n      - '\\Temp\\'\n      - '\\AppData\\Local\\Temp\\'\n  filter_known_ext:\n    TargetFilename|endswith:\n      - '.zip'\n      - '.7z'\n      - '.rar'\n      - '.gz'\n  condition: selection and not filter_known_ext\nfalsepositives:\n  - Legitimate proprietary file formats or application-specific binary output that happens to be high-entropy without being an archive at all\nlevel: medium\ntags:\n  - attack.collection\n  - attack.t1560.003"
+        },
+        {
+          "language": "KQL",
+          "title": "Script Execution With Bitwise/XOR Operations Producing Staged Output",
+          "description": "Correlates scripting engine execution containing bitwise/XOR-style operations with subsequent creation of an unrecognized, non-standard file in a staging directory.",
+          "query": "DeviceProcessEvents\n| where FileName in (\"python.exe\", \"perl.exe\", \"bash\")\n| where ProcessCommandLine has_any (\"xor\", \"bitwise\", \"^=\")\n| join kind=inner (\n    DeviceFileEvents\n    | where FolderPath has_any (@\"\\Temp\\\", \"/tmp/\")\n) on DeviceId\n| where Timestamp between (Timestamp1 .. Timestamp1 + 10m)\n| project Timestamp, DeviceId, ProcessCommandLine, FolderPath, FileName"
+        }
+      ],
+      "false_positives": [
+        "Legitimate proprietary or application-specific binary file formats that are naturally high-entropy without being an archive or exfiltration artifact at all",
+        "Software that performs legitimate, non-malicious bitwise or XOR-based operations as part of its normal data-processing function (e.g., certain checksum or simple obfuscation routines for licensing)"
+      ],
+      "response_steps": [
+        "Attempt to reverse the custom encoding once a sample is recovered, since a static or weak key (as seen with Stuxnet's fixed 31-byte XOR) may allow direct recovery of the staged data's content",
+        "Treat this finding as indicative of a more capable adversary than one using off-the-shelf tooling, and escalate investigation depth accordingly",
+        "Correlate with any prior collection activity on the host to determine the full scope of what was staged before this encoding was applied",
+        "Check for subsequent network transmission of the encoded file to determine whether exfiltration completed"
+      ],
+      "mitigations": [],
+      "related": [
+        {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information",
+          "relation": "Shares the same underlying custom-encoding approach, applied here specifically to staged collection data rather than to a delivered payload.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "A file is created in a staging directory with high statistical entropy and no recognizable standard archive or compression format header, and no corresponding archiving utility or compression library activity was observed on the host.",
+        "rationale": "Expect a low but high-value hit rate on this one -- most adversaries still use the cheaper Utility or Library sub-techniques, so a confirmed match here is worth escalating harder and faster than the volume of alerts might otherwise suggest, precisely because it implies custom tooling."
+      }
+    }
+  ]
+}
