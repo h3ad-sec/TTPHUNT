@@ -1,0 +1,437 @@
+{
+  "id": "T1087",
+  "name": "Account Discovery",
+  "tactic": "TA0007",
+  "tactic_name": "Discovery",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "ESXi",
+    "IaaS",
+    "Identity Provider",
+    "Office Suite",
+    "SaaS"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1087/",
+  "overview": "Before an adversary can steal a domain admin credential (T1003), reuse a valid account (T1078), or move laterally (T1021), they first need to know which accounts actually exist worth targeting — this is the enumeration step that turns \"I have a foothold\" into \"I have a target list.\" The four sub-techniques below split by account scope — local, domain, email, and cloud — because each one is queried through a completely different interface (a local SAM, an LDAP directory, an Exchange address list, a cloud IAM API) even though the underlying goal is identical: build a list of identities and figure out which ones are worth pursuing next.",
+  "prerequisite_concepts": [
+    {
+      "term": "This is nearly always a first move after landing, not a late-stage action",
+      "explanation": "Account discovery is cheap, fast, low-risk to the adversary, and produces immediately actionable output, which is exactly why `net user`, `whoami /groups`, and their equivalents show up in the very first minutes of post-compromise activity across almost every intrusion this pack references. The practical consequence for a hunter: this technique is one of the best early-warning signals in the entire kill chain, because it fires before credential theft, lateral movement, or impact ever begin — a confirmed hit here is a chance to interrupt an intrusion at its cheapest, earliest stage."
+    },
+    {
+      "term": "The tools involved are administrator tools, which is the whole detection problem",
+      "explanation": "Every single enumeration method across all four sub-techniques below — net.exe, dsquery, Get-ADUser, ldapsearch, Get-GlobalAddressList, aws iam list-users — is a legitimate administrative tool that IT staff run constantly for entirely benign reasons. There is no malware signature to catch here, which means detection has to lean entirely on context: who ran it, from what host, at what volume, and whether that pattern matches the account's documented role. A junior helpdesk analyst running `net user` on one workstation is normal; a web server running the same command is not, even though the command itself is identical."
+    },
+    {
+      "term": "Bulk enumeration is the signal, not enumeration itself",
+      "explanation": "Almost every environment has some baseline of individual, targeted account lookups happening constantly as part of routine IT support. What differs for an adversary is the pattern: a single query pulling the entire domain user list, the full Global Address List, or every IAM identity across every project, executed once rather than as an ongoing trickle of specific, individually-justified lookups. Detection logic across this whole pack is built around that volume/scope distinction rather than trying to flag every discovery command as suspicious on its own, since the latter approach guarantees overwhelming noise in any environment with an active IT team."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1087.001",
+      "name": "Local Account",
+      "tactic": "TA0007",
+      "tactic_name": "Discovery",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1087/001/",
+      "overview": "Adversaries enumerate the accounts local to a single machine — via `net user`/`net localgroup` on Windows, `/etc/passwd` and `id`/`groups` on Linux, `dscl` on macOS, or `esxcli system account list` on ESXi — to figure out who has local access and, critically, who among them holds local administrator rights worth targeting next. This is usually the very first discovery command run on a freshly compromised host, well before any attempt to touch the wider domain.",
+      "concepts": [
+        {
+          "term": "Finding the local admin is the actual goal, not the full user list",
+          "explanation": "A full account listing is mostly noise to an adversary; what they're actually filtering for is which of those accounts sits in the local Administrators group, since that's the account whose credentials (if dumped via T1003.002) are worth the effort. Tools like BloodHound automate exactly this filtering step at scale across many hosts simultaneously, which is why 'enumeration followed immediately by a targeted credential-access attempt against one specific local account' is a stronger signal than the enumeration command alone."
+        },
+        {
+          "term": "The registry setting that suppresses this at the UAC layer is a real, if narrow, mitigation",
+          "explanation": "Windows can be configured (via the CredUI EnumerateAdministrators policy) to hide which accounts are local administrators during the UAC elevation prompt itself, which closes one specific enumeration path without affecting `net localgroup administrators` or other command-line methods. It's a narrow control, but it's one of the only preventive (rather than purely detective) mitigations available anywhere in this Discovery-tactic pack, which is otherwise almost entirely a detection-and-response exercise."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT1",
+          "activity": "Executed net localgroup, net user, and net group commands to enumerate local accounts on compromised hosts."
+        },
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Ran net user and quser against critical infrastructure targets to enumerate accounts and active sessions."
+        },
+        {
+          "actor": "admin@338",
+          "activity": "Deployed the LOWBALL malware with embedded account enumeration, piping net user output to a temp file."
+        },
+        {
+          "actor": "BloodHound",
+          "activity": "Automates identification of accounts holding local administrator rights across many hosts as part of its attack-path graphing."
+        },
+        {
+          "actor": "TrickBot",
+          "activity": "Collects local system user account listings as part of its reconnaissance module."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "Execution of net.exe with user/localgroup arguments, or PowerShell equivalents (Get-LocalUser, Get-LocalGroupMember), especially from a non-administrative host."
+        },
+        {
+          "source": "auditd (Linux)",
+          "detail": "Read access to /etc/passwd combined with execution of id or groups shortly after, outside a configuration-management tool's normal baseline."
+        },
+        {
+          "source": "ESXi auth.log / vSphere API session logs",
+          "detail": "esxcli system account list invocations from a source other than the vCenter server itself managing that host."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Local Account Enumeration via Net.exe or PowerShell",
+          "description": "Flags execution of common local-account enumeration commands, scoped to exclude known configuration-management and monitoring agents.",
+          "query": "title: Local Account Enumeration Command\nid: 3e9c5a7d-6f4b-4c8a-9d1e-7f4c9a6d3e80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_net:\n    Image|endswith: '\\net.exe'\n    CommandLine|contains:\n      - 'user'\n      - 'localgroup'\n  selection_ps:\n    Image|endswith: '\\powershell.exe'\n    CommandLine|contains:\n      - 'Get-LocalUser'\n      - 'Get-LocalGroupMember'\n  filter_known:\n    ParentImage|endswith:\n      - '\\ccmexec.exe'\n      - '\\monitoring-agent.exe'\n  condition: (selection_net or selection_ps) and not filter_known\nfalsepositives:\n  - Routine helpdesk or IT administration activity, and configuration-management/monitoring agents performing their normal inventory function\nlevel: low\ntags:\n  - attack.discovery\n  - attack.t1087.001"
+        },
+        {
+          "language": "KQL",
+          "title": "Local Administrator Group Enumeration Followed by Credential Access Attempt",
+          "description": "Correlates local-admin-group enumeration with a subsequent LSASS access or SAM dump attempt on the same host, surfacing the discovery-to-credential-theft chain.",
+          "query": "DeviceProcessEvents\n| where ProcessCommandLine has \"localgroup administrators\" or ProcessCommandLine has \"Get-LocalGroupMember\"\n| project EnumTime=Timestamp, DeviceId\n| join kind=inner (\n    DeviceEvents\n    | where ActionType == \"ProcessAccessedLsass\" or FileName =~ \"reg.exe\" and ProcessCommandLine has \"save\"\n) on DeviceId\n| where Timestamp between (EnumTime .. EnumTime + 1h)\n| project EnumTime, DeviceId, Timestamp, ActionType, ProcessCommandLine"
+        }
+      ],
+      "false_positives": [
+        "Routine helpdesk and IT support activity troubleshooting local account or group membership issues",
+        "Configuration-management and monitoring agents (SCCM, Tanium, and similar) performing their normal periodic inventory collection"
+      ],
+      "response_steps": [
+        "Identify which local accounts were enumerated and cross-reference against which ones hold local administrator rights, since that's the likely next target",
+        "Check for follow-on credential access activity (LSASS access, SAM registry save) on the same host within the following hour",
+        "Determine what process or user context ran the enumeration, and trace back to the initial foothold if it wasn't a known administrative session",
+        "If a local admin account was subsequently targeted, treat every host sharing that account's password (if reused) as potentially exposed"
+      ],
+      "mitigations": [
+        {
+          "id": "M1028",
+          "name": "Operating System Configuration",
+          "detail": "Disable administrator account enumeration during UAC elevation via the CredUI EnumerateAdministrators registry policy."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1003.002",
+          "name": "Security Account Manager",
+          "relation": "The typical next step once local administrator accounts worth targeting have been identified through this enumeration."
+        },
+        {
+          "id": "T1078.003",
+          "name": "Local Accounts",
+          "relation": "The account tier this discovery activity is scoping out before an attempt to actually reuse or steal one of those credentials."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A host executes local-account or local-group enumeration commands (net user, net localgroup, Get-LocalUser, Get-LocalGroupMember) followed within one hour by LSASS process access or a SAM registry hive save on the same host.",
+        "rationale": "Score this as a chain, not two separate alerts -- either event alone is common IT noise, but the two together within a tight window is a materially stronger signal worth a higher-priority queue than either detection would earn on its own."
+      }
+    },
+    {
+      "id": "T1087.002",
+      "name": "Domain Account",
+      "tactic": "TA0007",
+      "tactic_name": "Discovery",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1087/002/",
+      "overview": "Adversaries query Active Directory to enumerate domain user and group accounts — through `net user /domain`, PowerShell's Get-ADUser/Get-ADGroupMember, LDAP tools like AdFind and ldapsearch, or purpose-built graphing tools like BloodHound — specifically to find which domain accounts hold privileged group membership (Domain Admins, Enterprise Admins) worth pursuing. This is the discovery step that turns a single compromised workstation into a map of the entire domain's privilege structure.",
+      "concepts": [
+        {
+          "term": "AdFind's ubiquity across unrelated threat actors makes it a weak standalone signal but a strong correlating one",
+          "explanation": "AdFind is used by APT41, BlackByte, Lotus Blossom, and dozens of other unrelated groups, precisely because it's a legitimate, publicly available LDAP query tool rather than custom malware — its presence alone barely narrows down who's behind an intrusion, and its execution alone is a weak detection signal in isolation. What makes it valuable is what surrounds it: AdFind execution against the full domain, followed by BloodHound-style graph traversal or a targeted Kerberoasting attempt against the specific accounts it surfaced, is a much stronger composite signal than any one tool in isolation."
+        },
+        {
+          "term": "BloodHound turns a list into an attack path, which is the actual risk",
+          "explanation": "Raw domain account enumeration produces a list; BloodHound (or an adversary manually replicating its logic) turns that list into a graph of who can reach Domain Admin and through which specific accounts, group memberships, and delegation relationships. That's a qualitatively different and more dangerous output than a simple `net group \"Domain Admins\" /domain` — it means the adversary isn't just looking for names, they're computing the shortest privilege-escalation path through the domain, which is why LDAP query volume/scope (not just presence) is the detail worth building a threshold around."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "FIN7",
+          "activity": "Executed 'net group \"Domain Admins\" /domain' and used csvde.exe to export domain account information."
+        },
+        {
+          "actor": "Wizard Spider",
+          "activity": "Leveraged the Get-ADComputer PowerShell cmdlet as part of broader domain reconnaissance activity."
+        },
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Executed 'net group /dom' for domain account and group discovery against critical infrastructure targets."
+        },
+        {
+          "actor": "Scattered Spider",
+          "activity": "Enumerated legitimate domain accounts in target environments as part of its initial-access-to-lateral-movement workflow."
+        },
+        {
+          "actor": "AdFind",
+          "activity": "Used by APT41, BlackByte, and Lotus Blossom among many others to enumerate domain users via LDAP queries."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "Execution of net.exe with /domain arguments, dsquery/dsget, csvde.exe, AdFind.exe, or PowerShell's Get-ADUser/Get-ADGroupMember, especially from a non-domain-controller, non-administrative endpoint."
+        },
+        {
+          "source": "Domain Controller LDAP query logs / Event 1644",
+          "detail": "Unusually broad or inefficient LDAP queries (wildcard searches across the entire directory) originating from a single client in a short window."
+        },
+        {
+          "source": "Network traffic (LDAP port 389/636)",
+          "detail": "A volume of LDAP query traffic from a single endpoint inconsistent with that host's normal role — a workstation generating DC-query volume typical of an admin tool."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Bulk Domain Account Enumeration from Non-Admin Endpoint",
+          "description": "Flags known domain-enumeration tools and commands executing from an endpoint not on the documented list of administrative/tooling hosts.",
+          "query": "title: Domain Account Enumeration Tooling\nid: 8f3c6a9d-4e7b-4c2a-9d6e-3f8c9a4d7e60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\AdFind.exe'\n      - '\\csvde.exe'\n      - '\\dsquery.exe'\n  selection_ps:\n    CommandLine|contains:\n      - 'Get-ADUser'\n      - 'Get-ADGroupMember'\n  filter_known:\n    Computer|in:\n      - 'AdminWorkstation01'\n      - 'ITToolingHost'\n  condition: (selection or selection_ps) and not filter_known\nfalsepositives:\n  - IT and identity-management staff performing legitimate domain audits or account cleanup from an unlisted but authorized workstation\nlevel: medium\ntags:\n  - attack.discovery\n  - attack.t1087.002"
+        },
+        {
+          "language": "KQL",
+          "title": "High-Volume LDAP Query From a Single Non-DC Endpoint",
+          "description": "Surfaces a client generating LDAP query volume against the domain controller inconsistent with its normal, documented role.",
+          "query": "DeviceNetworkEvents\n| where RemotePort in (389, 636)\n| where DeviceId !in (KnownAdminToolingHosts)\n| summarize QueryCount = count() by DeviceId, bin(Timestamp, 1h)\n| where QueryCount > 500\n| order by QueryCount desc"
+        }
+      ],
+      "false_positives": [
+        "Identity and access management staff running legitimate domain account audits or cleanup projects from a workstation not yet on the approved-tooling exclusion list",
+        "Security tooling (vulnerability scanners, an internal red team, or a legitimate BloodHound assessment) performing an approved, scheduled audit"
+      ],
+      "response_steps": [
+        "Determine the full scope of what was enumerated — a targeted single-group query is a very different risk level from a full-domain LDAP dump",
+        "Check for follow-on activity against any privileged accounts (Domain Admins, Enterprise Admins) surfaced by the enumeration, particularly Kerberoasting or DCSync attempts",
+        "Identify the host and account context that performed the enumeration and confirm whether it was an approved security assessment before escalating",
+        "If BloodHound-style tooling is confirmed, assume the adversary now has a full privilege-escalation path map and prioritize response accordingly rather than treating this as reconnaissance alone"
+      ],
+      "mitigations": [
+        {
+          "id": "M1028",
+          "name": "Operating System Configuration",
+          "detail": "Disable administrator account enumeration during UAC elevation via the CredUI EnumerateAdministrators registry policy."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1558.003",
+          "name": "Kerberoasting",
+          "relation": "A common next step once domain accounts with service principal names have been identified through this enumeration."
+        },
+        {
+          "id": "T1003.006",
+          "name": "DCSync",
+          "relation": "The escalation an adversary pursues once domain account enumeration has confirmed which accounts hold replication-capable privileges."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A non-domain-controller, non-administrative endpoint generates more than 500 LDAP queries against a domain controller within an hour, or executes AdFind/csvde/dsquery outside the approved tooling-host exclusion list.",
+        "rationale": "Maintain the tooling-host exclusion list as a living artifact tied to actual IAM team headcount changes -- a stale list is this hunt's single biggest noise source, since departing staff's old workstations rarely get removed from it promptly."
+      }
+    },
+    {
+      "id": "T1087.003",
+      "name": "Email Account",
+      "tactic": "TA0007",
+      "tactic_name": "Discovery",
+      "platforms": ["Windows", "Office Suite"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1087/003/",
+      "overview": "Adversaries pull an organization's Exchange Global Address List (GAL) or Google Workspace Directory to obtain a complete map of every employee's email address and account, most commonly via the `Get-GlobalAddressList` PowerShell cmdlet against on-premises Exchange or Exchange Online, or through Google's Directory API and GWSMO. Unlike most discovery techniques in this pack, MITRE is explicit that this one has essentially no effective preventive mitigation — the GAL exists specifically to be looked up, which pushes the entire defensive burden onto detection.",
+      "concepts": [
+        {
+          "term": "This is the technique that turns one compromised mailbox into a phishing target list for the whole org",
+          "explanation": "An adversary who compromises a single mailbox and then pulls the full GAL doesn't just learn who works at the organization — they get a ready-made, high-confidence target list for an internal phishing campaign (T1566) sent from an already-trusted internal account, which is a categorically more effective delivery vector than any external phishing attempt. This is why a GAL dump from a compromised mailbox is often the pivot point between 'one account compromised' and 'organization-wide incident,' and should be treated with that escalation in mind rather than as routine reconnaissance."
+        },
+        {
+          "term": "No preventive mitigation means the false-positive tuning work matters more here than almost anywhere else in the pack",
+          "explanation": "Because MITRE itself notes this technique can't be meaningfully prevented with access controls (the GAL has to be queryable by design for normal mail function), every bit of defensive value in this sub-technique comes from detection tuned tightly enough to be trusted, since there's no fallback preventive control to lean on if the detection is too noisy to act on. That raises the bar on getting the volume/source thresholds right compared to sub-techniques that have a real mitigation to fall back on."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "MailSniper",
+          "activity": "Uses the Get-GlobalAddressList cmdlet against Exchange and Office 365 to enumerate the full organizational address list."
+        },
+        {
+          "actor": "Ruler",
+          "activity": "Enumerates Exchange users and dumps the contents of the Global Address List as part of its post-compromise toolkit."
+        },
+        {
+          "actor": "Emotet",
+          "activity": "Uses modules to scrape email addresses directly from infected users' Outlook clients."
+        },
+        {
+          "actor": "Magic Hound (APT35)",
+          "activity": "Leverages PowerShell-based tooling for email account and address discovery within compromised environments."
+        },
+        {
+          "actor": "TrickBot",
+          "activity": "Collects email addresses from Outlook installations on infected hosts."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "M365 Unified Audit Log",
+          "detail": "Get-GlobalAddressList cmdlet execution, or high-volume Get-Recipient/Get-Mailbox/Get-User calls, especially by an account that isn't part of the mail-administration team."
+        },
+        {
+          "source": "Google Workspace Admin audit log",
+          "detail": "Directory API queries retrieving the full organizational user list, or GWSMO sync activity from an account with no prior history of that behavior."
+        },
+        {
+          "source": "Exchange MAPI/RPC connection logs",
+          "detail": "MAPI/RPC-based address list queries originating from a client machine rather than the mail server infrastructure itself."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Get-GlobalAddressList Executed by Non-Mail-Admin Account",
+          "description": "Flags GAL enumeration cmdlet usage by an account outside the documented mail-administration or IT-support group.",
+          "query": "OfficeActivity\n| where Operation == \"Get-GlobalAddressList\" or Operation has \"Get-Recipient\"\n| where UserId !in (MailAdminGroupMembers)\n| project TimeGenerated, UserId, Operation, ClientIP\n| order by TimeGenerated desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "Bulk Google Workspace Directory Enumeration",
+          "description": "Flags a Google Workspace Directory API query returning the full organizational user list from an account or application not on the approved-integration list.",
+          "query": "title: Bulk Google Workspace Directory Enumeration\nid: 2c7a9d4e-8b3f-4c6d-9e1a-7c4b9d3e8f50\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: gws\n  service: admin\ndetection:\n  selection:\n    EventName: 'directory.users.list'\n  filter_known:\n    ActorEmail|contains: 'ApprovedIntegrationAccounts'\n  condition: selection and not filter_known\nfalsepositives:\n  - Legitimate third-party SaaS integrations with approved Directory API scopes performing routine sync operations\nlevel: medium\ntags:\n  - attack.discovery\n  - attack.t1087.003"
+        }
+      ],
+      "false_positives": [
+        "Legitimate mail-administration or IT-support staff running GAL queries as part of routine account management",
+        "Approved third-party SaaS integrations (HR systems, calendaring tools) with documented Directory API access performing scheduled sync operations"
+      ],
+      "response_steps": [
+        "Determine whether the account that ran the GAL dump is itself compromised, and treat the full organization as a potential phishing target list going forward",
+        "Alert the security awareness/phishing-response team proactively, since a GAL dump is frequently a precursor to a large internal phishing wave, not an end in itself",
+        "Review whether the compromised account's mailbox rules or forwarding settings were also modified, indicating broader persistence beyond just the discovery activity",
+        "Rotate credentials and review sign-in history for the account that performed the enumeration"
+      ],
+      "mitigations": [],
+      "related": [
+        {
+          "id": "T1566.002",
+          "name": "Spearphishing Link",
+          "relation": "The most likely next step once a full organizational email list has been obtained — an internal phishing campaign sent from an already-trusted compromised account."
+        }
+      ],
+      "hypothesis": {
+        "statement": "An account with no history of mail-administration activity executes Get-GlobalAddressList or an equivalent bulk address-list query, returning more than 90 percent of the organization's total mailbox count in a single session.",
+        "rationale": "There is no preventive control to fall back on here per MITRE's own guidance, so tune the volume threshold conservatively and route any hit straight to phishing-response, not just IR -- the realistic next step is an internal campaign, and that team needs the lead time as much as IR does."
+      }
+    },
+    {
+      "id": "T1087.004",
+      "name": "Cloud Account",
+      "tactic": "TA0007",
+      "tactic_name": "Discovery",
+      "platforms": ["IaaS", "Identity Provider", "Office Suite", "SaaS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1087/004/",
+      "overview": "Adversaries enumerate user accounts, service accounts, and administrative identities across cloud platforms — via `Get-MsolRoleMember`/`az ad user list`/Graph API on Azure, `aws iam list-users`/`list-roles` on AWS, `gcloud iam service-accounts list` on GCP, or SCIM APIs on Okta/Slack — using purpose-built tooling like AzureHound, ROADTools, and Pacu that mirror BloodHound's domain-graphing approach applied to cloud IAM instead of Active Directory. This requires the adversary to already hold an authenticated identity in the tenant, which makes it a distinctly post-compromise, not pre-compromise, discovery step.",
+      "concepts": [
+        {
+          "term": "AzureHound and Pacu are the cloud-native equivalent of BloodHound, built for the same purpose",
+          "explanation": "Just as BloodHound turns a domain account list into an attack-path graph on-premises, AzureHound and ROADTools do the identical job against Azure AD, and Pacu does it against AWS IAM — collecting accounts, roles, and permission relationships, then computing which identity is the shortest path to a tenant-wide or account-wide administrative role. An adversary running one of these tools isn't just curious who exists; they're computing the cloud equivalent of a Domain Admin escalation path, and the output is directly actionable for the privilege-escalation and lateral-movement techniques that typically follow."
+        },
+        {
+          "term": "This technique requires prior compromise, which narrows and sharpens what to look for",
+          "explanation": "Unlike email account discovery, which can sometimes be triggered by external-facing enumeration, cloud account discovery via native APIs and CLIs requires an already-authenticated session — meaning every instance of this technique implies a credential or token has already been obtained. That makes the enumeration event itself a strong confirmation that a specific identity is actively compromised, not just a hypothesis, which should raise the priority of any hit here relative to discovery techniques that can fire on unauthenticated or externally-reachable enumeration."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Scattered Spider",
+          "activity": "Downloaded bulk Azure AD group member lists and identified privileged users and their email addresses during a documented campaign."
+        },
+        {
+          "actor": "Storm-0501",
+          "activity": "Enumerated users, roles, and resources within Azure tenants using the AzureHound tool."
+        },
+        {
+          "actor": "APT29",
+          "activity": "Conducted Azure AD account enumeration as part of broader identity-focused intrusion activity."
+        },
+        {
+          "actor": "AADInternals",
+          "activity": "A specialized tool used for detailed Azure AD user and tenant enumeration."
+        },
+        {
+          "actor": "Pacu",
+          "activity": "An AWS-focused post-exploitation framework that enumerates IAM users, roles, and groups as part of its reconnaissance modules."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Azure AD / Entra sign-in and audit logs",
+          "detail": "Get-MsolRoleMember, az ad user list, or Microsoft Graph directory-listing API calls from an unfamiliar application or automation identity, especially at high volume."
+        },
+        {
+          "source": "AWS CloudTrail",
+          "detail": "iam:ListUsers, iam:ListRoles, or iam:GetAccountAuthorizationDetails calls from a principal with no prior history of IAM enumeration activity."
+        },
+        {
+          "source": "GCP Cloud Audit Logs",
+          "detail": "iam.serviceAccounts.list or resourcemanager.projects.getIamPolicy calls at a volume or scope inconsistent with the calling identity's normal function."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Bulk Azure AD Directory Enumeration by Non-Admin Application",
+          "description": "Flags Graph API or Azure CLI directory-listing calls returning a large share of the tenant's total user population from an application not on the approved-admin-tooling list.",
+          "query": "AuditLogs\n| where OperationName in (\"List users\", \"List directoryRoleMembers\")\n| where InitiatedBy.app.displayName !in (ApprovedAdminTooling)\n| summarize RecordsReturned = count() by InitiatedBy.app.displayName, bin(TimeGenerated, 1h)\n| where RecordsReturned > 500\n| order by RecordsReturned desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "AWS IAM Enumeration Followed by AssumeRole Targeting a Discovered Role",
+          "description": "Correlates bulk IAM user/role listing with a subsequent AssumeRole call targeting one of the roles just enumerated, surfacing the discovery-to-escalation chain.",
+          "query": "title: IAM Enumeration Followed by Targeted AssumeRole\nid: 9d4c7a3e-6f8b-4c2a-9e1d-6f8c9a3e4d70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: aws\n  service: cloudtrail\ndetection:\n  selection_list:\n    eventName:\n      - 'ListRoles'\n      - 'ListUsers'\n  selection_assume:\n    eventName: 'AssumeRole'\n  timeframe: 1h\n  condition: selection_list and selection_assume | correlate by userIdentity.arn\nfalsepositives:\n  - Legitimate infrastructure-as-code tooling (Terraform, CloudFormation) that lists and then assumes roles as part of a normal deployment pipeline\nlevel: medium\ntags:\n  - attack.discovery\n  - attack.privilege_escalation\n  - attack.t1087.004"
+        }
+      ],
+      "false_positives": [
+        "Infrastructure-as-code tooling (Terraform, CloudFormation, Pulumi) that legitimately lists IAM entities and assumes roles as part of a deployment pipeline",
+        "Approved cloud security posture management (CSPM) tooling performing its normal periodic IAM inventory scan",
+        "Identity governance platforms conducting a scheduled entitlement review across the tenant"
+      ],
+      "response_steps": [
+        "Treat the identity that performed the enumeration as confirmed compromised, since this technique requires an already-authenticated session — this isn't a hypothesis to verify, it's a starting fact",
+        "Reconstruct which roles, users, or service accounts were surfaced by the enumeration and monitor them specifically for follow-on targeting",
+        "Revoke the session/token used to perform the enumeration and force re-authentication for the compromised identity",
+        "Check for AzureHound/ROADTools/Pacu-style tooling artifacts on the originating host or in the API call pattern to confirm automated graphing versus manual lookup"
+      ],
+      "mitigations": [
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict cloud account and role enumeration permissions to only identities with a documented operational need, following least-privilege principles."
+        },
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Regularly review which identities retain the permissions needed to enumerate IAM users, roles, and policies, and remove that capability where it isn't required."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1548.005",
+          "name": "Temporary Elevated Cloud Access",
+          "relation": "The typical next step once this enumeration has identified which roles or service accounts are worth impersonating or passing through to."
+        },
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "relation": "The already-compromised identity performing this enumeration, and the account tier whose other members this technique is scoping out."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A cloud identity not on the approved admin-tooling or infrastructure-as-code allow-list enumerates more than 500 IAM users or roles in a single hour, and is followed within that same hour by an AssumeRole or role-impersonation call targeting one of the enumerated identities.",
+        "rationale": "Since this technique structurally implies an already-compromised session, resist the urge to downgrade a confirmed hit to \"low confidence\" just because the enumeration itself looks like routine tooling -- the compound pattern with a targeted follow-on is what separates a real finding from IaC noise, not the enumeration volume alone."
+      }
+    }
+  ]
+}

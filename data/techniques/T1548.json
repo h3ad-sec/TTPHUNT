@@ -1,0 +1,578 @@
+{
+  "id": "T1548",
+  "name": "Abuse Elevation Control Mechanism",
+  "tactic": "TA0004",
+  "tactic_name": "Privilege Escalation",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "IaaS",
+    "Identity Provider",
+    "Office Suite"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1548/",
+  "overview": "Every operating system and cloud platform ships with a mechanism specifically designed to make privilege elevation deliberate and visible — Windows UAC's consent prompt, sudo's password re-entry, macOS's authorization dialog, a cloud provider's just-in-time role request. This technique family is entirely about defeating that visibility: getting code to run at a higher privilege level than the current context, without the elevation ever showing up as the interruption it's supposed to be. The six sub-techniques below split by which specific control gets bypassed — file permission bits, UAC, sudo, a deprecated macOS API, a cloud IAM feature, and TCC — because each one is a completely different mechanism with a completely different detection surface, even though the end goal (silent privilege gain) is identical across all six.",
+  "prerequisite_concepts": [
+    {
+      "term": "Elevation controls were built to create a decision point, not a wall",
+      "explanation": "None of these mechanisms are meant to be unbreakable barriers — UAC, sudo, and TCC all exist to force a moment where a human (or an explicit policy) consciously approves a jump in privilege, not to make that jump impossible. Every sub-technique here works by either removing the decision point entirely (a NOPASSWD sudoers entry, a disabled UAC setting) or by making the approval happen without the human realizing what they approved (an auto-elevating binary, a legitimate-looking authorization prompt). Detection engineering for this pack is fundamentally about noticing when the decision point was skipped, not just when privilege changed."
+      },
+    {
+      "term": "This is almost always a second step, not a first one",
+      "explanation": "An adversary needs code execution before any of these techniques matter — nobody bypasses UAC as an initial access vector. That means every sub-technique here should be hunted for as a signal that something upstream already succeeded (a phishing payload landed, a web shell got planted, a stolen low-privilege credential got used), which is exactly why the response steps across this pack consistently point back to \"find what got here first\" rather than treating the elevation event as the whole incident."
+      },
+    {
+      "term": "Auto-elevation and caching are legitimate features being pointed the wrong direction",
+      "explanation": "Windows genuinely needs some binaries to elevate without prompting (or every routine admin task would be an interruption), sudo genuinely needs a caching window (or every command in a script would demand a password), and cloud IAM genuinely needs temporary elevated access (or every automation pipeline would need standing admin rights). None of the underlying features are bugs — the abuse in every sub-technique here is riding a feature that exists for good operational reasons, which is why blanket \"disable the feature\" mitigations are rare in this pack; the real fix is almost always tightening the feature's scope (shorter cache windows, narrower auto-elevate lists, manual approval on temporary access) rather than removing it."
+      }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1548.001",
+      "name": "Setuid and Setgid",
+      "tactic": "TA0004",
+      "tactic_name": "Privilege Escalation",
+      "platforms": ["Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1548/001/",
+      "overview": "On Linux and macOS, a binary with its setuid or setgid bit set runs in the security context of the file's owner rather than the user who launched it — a mechanism that legitimately lets an unprivileged user run something like `passwd` without needing standing root access. Adversaries either set this bit on their own malware so it elevates on demand later, or they go looking for an already-setuid binary with a shell-escape or command-injection flaw and ride its existing elevated context instead of creating a new one.",
+      "concepts": [
+        {
+          "term": "Setting the bit is a persistence decision as much as an escalation one",
+          "explanation": "A malware author who runs `chmod u+s /path/to/implant` isn't just getting one elevated execution — they're planting a standing, always-available root-execution primitive that survives as long as the file exists, regardless of whether the original foothold that dropped it is still active. That's why finding an unexplained setuid bit on a non-standard binary matters even when nothing has run recently: the capability sitting there is the risk, not just active abuse of it."
+        },
+        {
+          "term": "Hunting an existing vulnerable setuid binary is a discovery problem, not an exploit problem",
+          "explanation": "Most systems already ship a handful of legitimate setuid binaries (`passwd`, `sudo`, `ping` on some distros). An adversary doesn't need to introduce anything new if one of those — or a third-party application's setuid helper — has a known privilege-escalation CVE or an exploitable shell-out. That means the hunt isn't just \"what changed,\" it's also \"what setuid binaries already exist in this environment, and are any of them versions with a known escalation flaw\" — an inventory question as much as a detection one."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Exaramel for Linux",
+          "activity": "Executes commands with elevated privileges via a specific binary configured with the setuid bit."
+        },
+        {
+          "actor": "Keydnap",
+          "activity": "Adds the setuid flag to a dropped binary on macOS specifically so it can re-elevate easily on future runs."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "auditd (Linux)",
+          "detail": "chmod/chown syscalls setting the setuid or setgid bit (mode 4xxx/2xxx) on a file outside of a package manager's normal install/update activity."
+        },
+        {
+          "source": "Process execution with UID/EUID mismatch",
+          "detail": "A process whose effective UID differs from the real UID of the user who launched it, especially from a binary in a user-writable path like /tmp or a home directory."
+        },
+        {
+          "source": "Filesystem integrity monitoring",
+          "detail": "Periodic diffing of the setuid/setgid binary inventory against a known-good baseline to catch bits added outside of legitimate package installation."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Setuid Bit Set on Binary Outside Package Manager Activity",
+          "description": "Flags chmod invocations that add the setuid or setgid bit to a file, filtered to exclude activity performed by the system's own package manager during legitimate installs.",
+          "query": "title: Setuid Bit Set Outside Package Manager\nid: 9d4e7a3c-6f2b-4c8e-9a1d-5f3c8a6e2b40\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: linux\n  service: auditd\ndetection:\n  selection:\n    type: 'SYSCALL'\n    syscall: 'chmod'\n    a1|contains: '4'\n  filter_pkg:\n    exe|endswith:\n      - '/dpkg'\n      - '/rpm'\n      - '/apt-get'\n  condition: selection and not filter_pkg\nfalsepositives:\n  - Legitimate software installers outside the standard package manager path that intentionally set setuid on a helper binary\nlevel: high\ntags:\n  - attack.privilege_escalation\n  - attack.t1548.001"
+        },
+        {
+          "language": "KQL",
+          "title": "Process Execution with EUID/UID Mismatch From User-Writable Path",
+          "description": "Surfaces process executions where the effective UID differs from the launching user's real UID, and the binary resides in a non-standard, user-writable directory.",
+          "query": "DeviceProcessEvents\n| where InitiatingProcessAccountUid != ProcessEffectiveUid\n| where FolderPath has_any (\"/tmp/\", \"/home/\", \"/var/tmp/\")\n| project Timestamp, DeviceName, FolderPath, FileName, InitiatingProcessAccountUid, ProcessEffectiveUid"
+        }
+      ],
+      "false_positives": [
+        "Legitimate system utilities (passwd, sudo, ping on some distributions) that ship with setuid set by design as part of the OS or package install",
+        "Third-party application installers that intentionally set setuid on a helper binary as part of their documented install process"
+      ],
+      "response_steps": [
+        "Remove the setuid/setgid bit from the flagged binary immediately unless it's a confirmed, documented legitimate use",
+        "Identify how the binary got onto the system in the first place — this is a persistence artifact, so the actual point of entry is usually earlier in the timeline",
+        "Audit the full setuid/setgid inventory on the host for other undocumented instances, since an adversary who planted one often plants more than one",
+        "Check the binary's file hash and behavior in a sandbox before removal to preserve evidence of what it actually does when triggered"
+      ],
+      "mitigations": [
+        {
+          "id": "M1022",
+          "name": "Restrict File and Directory Permissions",
+          "detail": "Minimize the number of setuid/setgid binaries present on a system, and remove the bit from any application known to have a shell-escape or injection vulnerability."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1055.008",
+          "name": "Ptrace System Calls",
+          "relation": "A common follow-on once a setuid binary provides elevated execution, using that context to attach to and manipulate other processes."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A binary in a user-writable path (/tmp, /home, /var/tmp) has the setuid or setgid bit set, and that bit was not applied by the system's own package manager.",
+        "rationale": "Run this as a recurring inventory sweep rather than a one-time check -- the risk here is the standing capability sitting on disk, not a single execution event, so a clean result today doesn't mean the binary won't be planted next week."
+      }
+    },
+    {
+      "id": "T1548.002",
+      "name": "Bypass User Account Control",
+      "tactic": "TA0004",
+      "tactic_name": "Privilege Escalation",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1548/002/",
+      "overview": "Windows UAC is supposed to interrupt any action that needs administrator rights with a visible consent prompt, but a specific set of built-in binaries (eventvwr.exe, sdclt.exe, fodhelper.exe, and others) are allowed to auto-elevate without ever showing that prompt, because Microsoft trusts them not to need it. Adversaries hijack the registry keys or COM objects those auto-elevating binaries read from, so that when the trusted binary auto-elevates, it unknowingly launches the adversary's payload instead — the prompt the user would have seen never fires, because from Windows's perspective nothing untrusted ever asked for permission.",
+      "concepts": [
+        {
+          "term": "The bypass exploits trust in the binary, not a flaw in UAC's logic itself",
+          "explanation": "UAC's auto-elevate allowlist isn't a bug — Microsoft deliberately exempts specific Control Panel applets and system tools from prompting, on the assumption that a signed, known-good Windows binary doesn't need to ask permission to do its normal job. The entire attack surface here is the gap between \"this specific binary is trusted to auto-elevate\" and \"whatever this binary happens to read from the registry or launch via COM is also trustworthy\" — an assumption that was true until an adversary got a foothold with write access to that registry key or COM path."
+        },
+        {
+          "term": "UACME cataloging the bypasses doesn't make them stop working",
+          "explanation": "The UACME project on GitHub documents dozens of known UAC bypass methods in detail, which sounds like it should make defense easy — except patching one specific method (eventvwr, sdclt, fodhelper) doesn't close the underlying pattern, and new auto-elevating binaries or COM objects get discovered and weaponized on an ongoing basis. That's the practical reason detection here is written around the behavioral pattern (an auto-elevate binary launching an unexpected child, or a registry key under a known auto-elevate path changing) rather than a fixed list of named exploits, since the list is provably incomplete and always will be."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Raspberry Robin",
+          "activity": "Abuses fodhelper.exe's auto-elevate behavior to achieve UAC bypass as part of its infection chain."
+        },
+        {
+          "actor": "LockBit 2.0/3.0",
+          "activity": "Uses registry manipulation and COM interface exploitation to bypass UAC before deploying its ransomware payload."
+        },
+        {
+          "actor": "BlackCat (ALPHV)",
+          "activity": "Exploits COM interface auto-elevation as a privilege escalation module ahead of encryption."
+        },
+        {
+          "actor": "Earth Lusca",
+          "activity": "Uses the fodhelper.exe technique to bypass UAC during intrusion operations."
+        },
+        {
+          "actor": "Cobalt Strike",
+          "activity": "Ships multiple built-in UAC bypass modules usable directly from its post-exploitation toolkit."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon Event 13 (Registry Value Set)",
+          "detail": "Writes to known auto-elevate-adjacent registry paths such as HKCU\\Software\\Classes\\ms-settings\\shell\\open\\command or HKCU\\Software\\Classes\\*\\shell\\open\\command, especially followed shortly by execution of the associated auto-elevating binary."
+        },
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "A known auto-elevating binary (eventvwr.exe, sdclt.exe, fodhelper.exe, computerdefaults.exe) launching a child process it wouldn't normally spawn, at high integrity level."
+        },
+        {
+          "source": "Windows Security Event 4688 with Token Elevation Type",
+          "detail": "Process creation events showing TokenElevationType 2 (full token/UAC prompt shown) versus an unexpected elevation with no corresponding consent.exe interaction."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Known Auto-Elevate Binary Spawning Unexpected Child Process",
+          "description": "Flags Windows binaries known to auto-elevate without a UAC prompt spawning an unusual child process shortly after registry-key manipulation.",
+          "query": "title: Auto-Elevate Binary Spawning Unexpected Child\nid: 2f6c9a4e-8d3b-4c7a-9e1f-6b4c9a3e8d20\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_parent:\n    ParentImage|endswith:\n      - '\\eventvwr.exe'\n      - '\\sdclt.exe'\n      - '\\fodhelper.exe'\n      - '\\computerdefaults.exe'\n  filter_known:\n    Image|endswith: '\\mmc.exe'\n  condition: selection_parent and not filter_known\nfalsepositives:\n  - Legitimate administrative use of Event Viewer or the Backup and Restore control panel by IT staff, which spawns expected helper processes\nlevel: high\ntags:\n  - attack.privilege_escalation\n  - attack.defense_evasion\n  - attack.t1548.002"
+        },
+        {
+          "language": "KQL",
+          "title": "Registry Write to Auto-Elevate Hijack Path Followed by Elevated Execution",
+          "description": "Correlates a write to a known UAC-bypass-adjacent registry key with subsequent high-integrity process execution.",
+          "query": "DeviceRegistryEvents\n| where RegistryKey has_any (@\"ms-settings\\shell\\open\\command\", @\"exefile\\shell\\open\\command\")\n| project RegTime = Timestamp, DeviceId, RegistryKey, RegistryValueData\n| join kind=inner (\n    DeviceProcessEvents\n    | where ProcessIntegrityLevel == \"High\"\n) on DeviceId\n| where Timestamp between (RegTime .. RegTime + 5m)\n| project RegTime, DeviceId, RegistryKey, Timestamp, FileName, ProcessCommandLine"
+        }
+      ],
+      "false_positives": [
+        "Legitimate IT administration activity that launches Event Viewer, the Backup and Restore applet, or other auto-elevating Control Panel tools as part of routine maintenance",
+        "Software deployment tools that legitimately modify file-association registry keys as part of an approved installation workflow"
+      ],
+      "response_steps": [
+        "Identify and revert the specific registry key modification used for the hijack before it's triggered again",
+        "Determine what payload actually executed at high integrity as a result of the bypass, and scope the incident around that payload's subsequent actions",
+        "Check for other UAC bypass indicators on the host, since an adversary who used one method often has a fallback method staged",
+        "Review whether the account performing the bypass had legitimate reason for any elevated access at all, since this technique implies the attacker didn't have standing admin rights"
+      ],
+      "mitigations": [
+        {
+          "id": "M1052",
+          "name": "User Account Control",
+          "detail": "Set UAC to the highest enforcement level (Always Notify) and apply relevant DLL-hijacking mitigations to reduce the available auto-elevate attack surface."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Remove standard users from the local Administrators group so a UAC bypass has nothing meaningful to escalate into even if it succeeds."
+        },
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Regularly review systems against the UACME catalog of known bypass methods to confirm patched/mitigated status."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1059.001",
+          "name": "PowerShell",
+          "relation": "A common execution engine for the payload that ends up running with the elevated token once the UAC bypass succeeds."
+        },
+        {
+          "id": "T1055.012",
+          "name": "Process Hollowing",
+          "relation": "Sometimes chained immediately after a successful UAC bypass to further mask the now-elevated malicious process."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A known auto-elevating Windows binary (eventvwr.exe, sdclt.exe, fodhelper.exe, computerdefaults.exe) spawns a child process other than its own well-known helper, within five minutes of a write to a file-association or ms-settings registry key.",
+        "rationale": "Baseline the handful of legitimate helper processes each auto-elevate binary normally spawns before deploying this in production -- the exclusion list is short and stable, which is exactly what makes this one of the higher-precision hunts in the whole pack once it's tuned."
+      }
+    },
+    {
+      "id": "T1548.003",
+      "name": "Sudo and Sudo Caching",
+      "tactic": "TA0004",
+      "tactic_name": "Privilege Escalation",
+      "platforms": ["Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1548/003/",
+      "overview": "Sudo lets an administrator delegate specific root-equivalent actions to specific users, but three of its configuration knobs — a NOPASSWD sudoers entry, a long timestamp_timeout caching window, and tty_tickets being disabled — can each independently turn that careful delegation into standing, no-friction root access. Adversaries either add their own NOPASSWD line to the sudoers file once they have write access to it, or they simply wait for and ride an existing cached sudo session rather than needing a password at all.",
+      "concepts": [
+        {
+          "term": "The timestamp cache is a convenience feature that becomes a window of opportunity",
+          "explanation": "Sudo's default behavior caches a successful authentication for a few minutes (governed by timestamp_timeout) specifically so a user running several sudo commands in a script or session isn't prompted every single time. An adversary who gains code execution during that cached window inherits root-equivalent access with zero authentication required, which is precisely why malware families like Proton go out of their way to disable tty_tickets — doing so means the cached session applies across every terminal on the system, not just the one where the legitimate user actually typed their password, multiplying the attacker's opportunity window without needing to catch the exact right terminal."
+        },
+        {
+          "term": "A NOPASSWD sudoers entry is functionally a permanent privilege grant hiding in a config file",
+          "explanation": "Once a line like `user1 ALL=(ALL) NOPASSWD: ALL` exists in /etc/sudoers or /etc/sudoers.d/, that account has unconditional root access forever, with no password check and no caching window to wait out — it's not a temporary escalation technique at all, it's a persistence mechanism disguised as a privilege-escalation one. That's why file-integrity monitoring on /etc/sudoers and /etc/sudoers.d/ matters just as much here as detecting the moment of privileged execution: the entry itself is the compromise, independent of whether it's been used yet."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Dok (OSX.Dok)",
+          "activity": "Adds an 'admin ALL=(ALL) NOPASSWD: ALL' line to /etc/sudoers to obtain unconditional root access."
+        },
+        {
+          "actor": "Proton",
+          "activity": "Disables tty_tickets via the sudoers file and kills the active Terminal process to force re-authentication under attacker-controlled conditions."
+        },
+        {
+          "actor": "Shai-Hulud",
+          "activity": "Leverages entries under /etc/sudoers.d/ to establish privileged execution."
+        },
+        {
+          "actor": "CanisterWorm",
+          "activity": "Attempts passwordless sudo escalation and executes destructive system-wipe commands if the attempt succeeds."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "File integrity monitoring on /etc/sudoers and /etc/sudoers.d/",
+          "detail": "Any modification to these files outside a documented, approved change-management process, especially additions of NOPASSWD or tty_tickets-disabling directives."
+        },
+        {
+          "source": "auditd",
+          "detail": "sudo command executions where the resulting process runs with euid=0, correlated with whether authentication was actually re-prompted for that specific invocation."
+        },
+        {
+          "source": "/var/db/sudo timestamp file access",
+          "detail": "Access patterns suggesting an adversary process is checking for or riding an existing cached sudo timestamp rather than the legitimate user re-authenticating."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Sudoers File Modified to Add NOPASSWD or Disable TTY Tickets",
+          "description": "Flags any write to /etc/sudoers or /etc/sudoers.d/ that introduces a NOPASSWD directive or disables tty_tickets isolation.",
+          "query": "title: Sudoers Modification Adding NOPASSWD or Disabling TTY Tickets\nid: 5c8e3a9d-7f2b-4c6a-8d1e-9c4b7a3f5e60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: linux\n  service: auditd\ndetection:\n  selection_path:\n    name|startswith:\n      - '/etc/sudoers'\n  selection_content:\n    - 'NOPASSWD'\n    - '!tty_tickets'\n  condition: selection_path and selection_content\nfalsepositives:\n  - Approved change-management adding a scoped, documented NOPASSWD entry for a specific automation account and specific command, not a blanket grant\nlevel: high\ntags:\n  - attack.privilege_escalation\n  - attack.persistence\n  - attack.t1548.003"
+        },
+        {
+          "language": "KQL",
+          "title": "Sudo Command Execution With No Corresponding Password Prompt",
+          "description": "Surfaces sudo invocations resulting in root-equivalent execution where the process was not observed re-prompting for authentication, consistent with abuse of the caching window.",
+          "query": "LinuxAuditLog\n| where ExecutablePath == \"/usr/bin/sudo\"\n| where EffectiveUid == 0\n| where isempty(AuthPromptEvent)\n| project Timestamp, Hostname, User, CommandLine\n| order by Timestamp desc"
+        }
+      ],
+      "false_positives": [
+        "A narrowly-scoped, documented NOPASSWD entry for a specific automation account restricted to a specific command, added through an approved change-management process",
+        "Legitimate rapid sequential sudo usage by an administrator within the same authenticated session and terminal, which is exactly what the caching window is designed to support"
+      ],
+      "response_steps": [
+        "Remove any unauthorized NOPASSWD entry or tty_tickets modification from the sudoers configuration immediately",
+        "Set timestamp_timeout to 0 (or a minimal value) on the affected host to close the caching window going forward",
+        "Review sudo command history for the account during the suspected compromise window to scope what was actually done with the elevated access",
+        "Check for other persistence mechanisms planted using the root access gained through this technique, since it's rarely the end goal on its own"
+      ],
+      "mitigations": [
+        {
+          "id": "M1028",
+          "name": "Operating System Configuration",
+          "detail": "Ensure tty_tickets remains enabled so a cached sudo session is scoped to the single terminal where authentication actually occurred."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Set timestamp_timeout to 0, requiring password re-entry for every sudo invocation rather than relying on a caching window."
+        },
+        {
+          "id": "M1022",
+          "name": "Restrict File and Directory Permissions",
+          "detail": "Strictly control who can edit /etc/sudoers and /etc/sudoers.d/, and require code review for any change to either."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1078.003",
+          "name": "Local Accounts",
+          "relation": "The account tier this technique most commonly escalates from, once local credential theft or a foothold under a low-privilege local user succeeds."
+        }
+      ],
+      "hypothesis": {
+        "statement": "The /etc/sudoers or /etc/sudoers.d/ configuration is modified to add a NOPASSWD directive or disable tty_tickets, outside of a change-management ticket referencing that specific host and account.",
+        "rationale": "Pair the file-integrity alert with the change-management ticketing system directly rather than trusting a human review step -- this hunt's entire value is catching the handful of unticketed edits, and a manual cross-check will miss the ones made during off-hours specifically to avoid one."
+      }
+    },
+    {
+      "id": "T1548.004",
+      "name": "Elevated Execution with Prompt",
+      "tactic": "TA0004",
+      "tactic_name": "Privilege Escalation",
+      "platforms": ["macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1548/004/",
+      "overview": "macOS's deprecated AuthorizationExecuteWithPrivileges API lets any application show the standard-looking macOS credential prompt and, once the user types their password, run arbitrary code as root — without ever checking whether the requesting application is signed, notarized, or from a trustworthy source. Malware exploits this by simply asking for the password through a legitimate-looking system dialog, relying on the fact that most users can't distinguish a prompt triggered by malware from one triggered by a real installer.",
+      "concepts": [
+        {
+          "term": "Deprecation doesn't mean removal, and that gap is the entire technique",
+          "explanation": "Apple marked AuthorizationExecuteWithPrivileges deprecated years ago in favor of SMJobBless and newer privileged-helper patterns, but the API still functions on current macOS versions — deprecation is a developer-facing recommendation, not an enforced removal. Malware authors don't care that Apple recommends against it; the API still does exactly what it always did, which is why this sub-technique remains viable long after the \"proper\" replacement API existed."
+        },
+        {
+          "term": "The prompt itself is the social engineering, not a separate step",
+          "explanation": "Unlike most privilege-escalation techniques that try to avoid any visible sign of what's happening, this one is built entirely around a visible, expected-looking system dialog — the user isn't tricked into clicking a suspicious link, they're shown the exact same authorization prompt every legitimate macOS installer uses, asking for the exact same thing (their own account password) they've typed into that dialog dozens of times before. OSX/Shlayer's success with this technique isn't a technical achievement, it's evidence that a familiar UI pattern gets trusted regardless of what's actually requesting it."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "OSX/Shlayer",
+          "activity": "Escalates to root by directly asking the user for their credentials through a standard macOS authorization prompt, then executing with the resulting elevated privileges."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "/usr/libexec/security_authtrampoline invocation logs",
+          "detail": "The system component that actually handles the elevation prompt; invocation by an unsigned or unexpected parent application is a strong signal."
+        },
+        {
+          "source": "Unified log (macOS)",
+          "detail": "AuthorizationExecuteWithPrivileges API calls correlated with the calling application's code-signing status and notarization state."
+        },
+        {
+          "source": "Gatekeeper / XProtect logs",
+          "detail": "Whether the requesting application passed or was flagged by macOS's own built-in reputation checks prior to the authorization request."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Authorization Prompt Triggered by Unsigned Application",
+          "description": "Flags invocation of the macOS authorization trampoline by an application that is unsigned or not notarized, a strong indicator of AuthorizationExecuteWithPrivileges abuse.",
+          "query": "title: Unsigned Application Triggering Authorization Prompt\nid: 7a3d9c5e-4f8b-4c2a-9e6d-3f8b5c9a4d70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: macos\ndetection:\n  selection:\n    Image|endswith: '/security_authtrampoline'\n  filter_signed:\n    ParentSigningStatus: 'valid'\n  condition: selection and not filter_signed\nfalsepositives:\n  - Legitimate third-party installers that have not yet completed Apple notarization but are otherwise benign\nlevel: medium\ntags:\n  - attack.privilege_escalation\n  - attack.t1548.004"
+        }
+      ],
+      "false_positives": [
+        "Legitimate, benign third-party software installers that use the same deprecated API and have not been updated to Apple's newer privileged-helper patterns",
+        "Internally-developed enterprise tooling that hasn't been notarized but is approved for use through other means"
+      ],
+      "response_steps": [
+        "Identify the specific application that triggered the prompt and verify its legitimacy against a known-software inventory",
+        "If confirmed malicious, remove the application and any files it wrote with the resulting root privileges",
+        "Reset the credentials of the user who approved the prompt, since a phished or reused password may have been the actual entry point",
+        "Review Gatekeeper/XProtect logs to determine why the application wasn't flagged before the user ever saw the prompt"
+      ],
+      "mitigations": [
+        {
+          "id": "M1038",
+          "name": "Execution Prevention",
+          "detail": "Restrict execution to signed and notarized applications, reducing the pool of software that can legitimately trigger this API undetected."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1566.001",
+          "name": "Spearphishing Attachment",
+          "relation": "A common delivery path for the initial malicious application that later triggers the elevation prompt."
+        }
+      ],
+      "hypothesis": {
+        "statement": "An unsigned or non-notarized application triggers the macOS authorization trampoline, prompting the user for their credentials outside of a recognized software installation workflow.",
+        "rationale": "Cross-reference against your organization's approved-software inventory before escalating -- internally built tools that haven't gone through notarization are the dominant false-positive source, not third-party installers."
+      }
+    },
+    {
+      "id": "T1548.005",
+      "name": "Temporary Elevated Cloud Access",
+      "tactic": "TA0004",
+      "tactic_name": "Privilege Escalation",
+      "platforms": ["IaaS", "Identity Provider", "Office Suite"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1548/005/",
+      "overview": "Cloud platforms deliberately provide mechanisms for a low-privilege identity to temporarily gain more access — just-in-time role activation, service-account impersonation, and role-passthrough permissions like AWS PassRole or GCP's serviceAccountUser — because standing high-privilege grants are worse practice than short-lived ones. Adversaries abuse the same mechanisms, impersonating or passing through to a higher-privileged identity for exactly as long as they need it, which produces a much smaller detection window than a permanent role assignment would.",
+      "concepts": [
+        {
+          "term": "This is the cloud-native version of 'living off the land'",
+          "explanation": "Nothing about PassRole, AssumeRole, or ApplicationImpersonation is inherently malicious — they're core features every mature cloud environment relies on for automation and least-privilege design. An adversary using them isn't exploiting a vulnerability, they're using exactly the feature set a well-run cloud environment is supposed to have, which is precisely why this sub-technique is harder to distinguish from legitimate activity than almost anything else in this pack: the CloudTrail/audit event looks identical whether it's a CI/CD pipeline or an attacker doing it."
+        },
+        {
+          "term": "Stealth comes from brevity, which means detection has to be near-real-time",
+          "explanation": "Because the whole point of abusing a temporary-elevation mechanism is that the elevated access expires on its own, a detection process that only reviews logs in a weekly or monthly batch will frequently find the access window has already closed by the time anyone looks — there's no standing privileged account left to notice in a point-in-time audit. This is the strongest argument in this entire pack for streaming/near-real-time correlation over periodic review, since periodic review is structurally blind to a risk that's designed to be temporary."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Storm-0501",
+          "activity": "Enumerated and abused temporary elevated access mechanisms within Azure tenants as part of a broader identity-compromise campaign."
+        },
+        {
+          "actor": "APT29",
+          "activity": "Conducted account enumeration and privilege-escalation activity within Azure AD environments consistent with abusing role/impersonation mechanisms."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "AWS CloudTrail",
+          "detail": "PassRole or AssumeRole events where a principal grants itself access to a service or role it hadn't previously used, especially targeting a new, more-privileged service."
+        },
+        {
+          "source": "GCP Cloud Audit Logs",
+          "detail": "iam.serviceAccountTokenCreator or iam.serviceAccountUser usage generating a token or attaching a service account to a resource outside documented automation."
+        },
+        {
+          "source": "Exchange Online / M365 audit log",
+          "detail": "ApplicationImpersonation role assignments to a service principal, or usage of that role by an account outside its normal, documented scope."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Repeated PassRole/AssumeRole Targeting New Services",
+          "description": "Surfaces a principal using role-passthrough permissions to target services it has no history of interacting with, consistent with abuse of temporary elevation rather than routine automation.",
+          "query": "AWSCloudTrail\n| where EventName in (\"PassRole\", \"AssumeRole\")\n| summarize FirstSeen=min(EventTime), TargetServices=make_set(RequestParameters.roleArn) by UserIdentityArn\n| where array_length(TargetServices) > 3\n| order by FirstSeen desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "ApplicationImpersonation Role Used Outside Documented Automation Account",
+          "description": "Flags use of the Exchange Online ApplicationImpersonation role by a principal not on the approved automation-account list.",
+          "query": "title: Unexpected ApplicationImpersonation Usage\nid: 4b8d3a7e-9c2f-4d6a-8e1b-3c9d7a4f5b60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: m365\n  service: exchange\ndetection:\n  selection:\n    Operation: 'ApplicationImpersonation'\n  filter_known:\n    UserId|contains: 'ApprovedAutomationAccounts'\n  condition: selection and not filter_known\nfalsepositives:\n  - Newly onboarded, legitimate automation or integration accounts not yet added to the approved-accounts exclusion list\nlevel: medium\ntags:\n  - attack.privilege_escalation\n  - attack.t1548.005"
+        }
+      ],
+      "false_positives": [
+        "Legitimate CI/CD pipelines and automation accounts that routinely use PassRole/AssumeRole to reach multiple services as part of their normal function",
+        "Newly onboarded integration accounts not yet reflected in the approved-automation exclusion list"
+      ],
+      "response_steps": [
+        "Revoke the temporary access grant or token immediately if still active, since the whole point of this technique is that it may already have expired on its own",
+        "Reconstruct exactly what the elevated identity did during the access window from CloudTrail/audit logs, since that window is the entire scope of what needs investigating",
+        "Review whether manual-approval requirements for temporary elevation are actually enforced, or whether the environment auto-grants requests without review",
+        "Audit for other identities with the same PassRole/impersonation permission who could repeat this pattern"
+      ],
+      "mitigations": [
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Limit which cloud accounts can assume, create, or impersonate additional roles and permissions to only those with a documented operational need."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "relation": "The initial compromised identity this technique escalates from — a low-privilege cloud account that shouldn't have been able to reach the resource it ultimately touched."
+        },
+        {
+          "id": "T1087.004",
+          "name": "Cloud Account Discovery",
+          "relation": "The reconnaissance step that typically precedes this technique, identifying which roles/accounts are worth impersonating or passing through to."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A cloud identity uses PassRole, AssumeRole, or an equivalent impersonation permission to reach more than three distinct services it has no prior interaction history with, within a 24-hour window.",
+        "rationale": "Run this hunt on a short cycle (daily, not weekly) -- the entire premise of this technique is that the elevated access is temporary by design, so a batch review on any longer cadence will systematically miss windows that have already closed."
+      }
+    },
+    {
+      "id": "T1548.006",
+      "name": "TCC Manipulation",
+      "tactic": "TA0004",
+      "tactic_name": "Privilege Escalation",
+      "platforms": ["macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1548/006/",
+      "overview": "Transparency, Consent, and Control (TCC) is the macOS subsystem that gates access to sensitive resources — camera, microphone, screen recording, and Full Disk Access — through a database at /Library/Application Support/com.apple.TCC/TCC.db that, once an app is granted access, never prompts again. Adversaries either inject code into an application that already holds TCC grants (inheriting its permissions without a new prompt) or, if System Integrity Protection has been disabled, directly manipulate the TCC database to grant their own binary access outright.",
+      "concepts": [
+        {
+          "term": "Inherited trust means the malicious code never has to ask for anything",
+          "explanation": "A process injected into Finder or another already-trusted application doesn't trigger a new TCC prompt, because from the operating system's perspective the request is coming from an application the user already approved — the injected code is invisible to the exact mechanism designed to catch exactly this kind of unauthorized access. This is the same 'ride an already-trusted context' pattern seen elsewhere in this pack (setuid, UAC auto-elevate), applied specifically to macOS's privacy permission model instead of a general-purpose privilege boundary."
+        },
+        {
+          "term": "SIP disablement is a prerequisite worth treating as its own alert",
+          "explanation": "Directly editing the TCC.db database requires System Integrity Protection to be off, which is not something that happens accidentally or as a side effect of routine operations — SIP is normally enabled by default and disabling it is a deliberate, rare action almost always associated with either legitimate low-level development work or active compromise. Flagging SIP disablement itself, independent of anything that happens afterward, catches this sub-technique's most direct variant at its earliest and cheapest-to-investigate point."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "XCSSET",
+          "activity": "Attempts to access user folders such as Desktop, Downloads, and Documents; when access is denied, resets the TCC database in a loop and retries until access succeeds."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "TCC.db file modification monitoring",
+          "detail": "Direct writes to /Library/Application Support/com.apple.TCC/TCC.db outside of the tccd process itself, which is a strong indicator of database manipulation rather than normal grant/revoke flow."
+        },
+        {
+          "source": "System Integrity Protection status",
+          "detail": "Any change to SIP's enabled/disabled state, since disablement is a rare, deliberate action and a prerequisite for direct TCC.db editing."
+        },
+        {
+          "source": "Unified log (macOS) — process injection indicators",
+          "detail": "Code injection into applications known to hold Full Disk Access or Automation permissions (Finder, SystemUIServer), which would inherit those permissions without a new prompt."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Direct TCC.db Write Outside the tccd Process",
+          "description": "Flags file modification events against the TCC database made by any process other than the legitimate tccd daemon, a strong indicator of direct database manipulation.",
+          "query": "title: Direct TCC Database Modification\nid: 6d9c4a3e-8f7b-4c2d-9e6a-4c8d3a9f7e50\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: macos\ndetection:\n  selection:\n    TargetFilename|contains: 'com.apple.TCC/TCC.db'\n  filter_known:\n    Image|endswith: '/tccd'\n  condition: selection and not filter_known\nfalsepositives:\n  - Approved MDM management tooling that legitimately pushes TCC permission overrides via MDMOverrides.plist rather than the runtime database directly\nlevel: high\ntags:\n  - attack.privilege_escalation\n  - attack.t1548.006"
+        }
+      ],
+      "false_positives": [
+        "MDM-managed permission pushes via MDMOverrides.plist on enrolled devices, which is a legitimate, separate mechanism from runtime TCC.db editing",
+        "Legitimate low-level system development or debugging work that requires SIP disabled on a dedicated, isolated development machine"
+      ],
+      "response_steps": [
+        "Re-enable System Integrity Protection immediately if found disabled without a documented, approved reason",
+        "Review the TCC database for unauthorized permission grants and revoke any that weren't legitimately approved by the user",
+        "Identify which application was targeted for code injection (if any) and treat every permission it held as potentially exposed during the compromise window",
+        "Run `tccutil reset` for the affected permission categories and require the legitimate applications to re-request access cleanly"
+      ],
+      "mitigations": [
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Regularly review applications holding Automation and Full Disk Access permissions; use tccutil reset to clear accumulated grants and force re-evaluation."
+        },
+        {
+          "id": "M1022",
+          "name": "Restrict File and Directory Permissions",
+          "detail": "Limit Full Disk Access grants to only the specific binaries that require it, enforced through MDM policy rather than ad hoc user approval."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1055",
+          "name": "Process Injection",
+          "relation": "The mechanism by which malicious code inherits an already-trusted application's TCC permissions without triggering a new consent prompt.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "The TCC.db database is modified by a process other than tccd itself, or System Integrity Protection is disabled on a host with no documented development/debugging exception on file.",
+        "rationale": "Treat SIP disablement as a standalone, unconditional alert rather than waiting to see what happens after -- it's rare enough in a well-managed fleet that the false-positive cost of over-alerting on it is low, and it's the earliest, cheapest point to catch this technique's direct-manipulation variant."
+      }
+    }
+  ]
+}

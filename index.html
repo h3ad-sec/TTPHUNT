@@ -677,6 +677,7 @@ function exportNavigatorLayer(){
       enabled:true, showSubtechniques:true, metadata:[], links:[]
     });
     t.subtechniques.forEach(function(s){
+      if(s.id===t.id)return; // flat technique (no real ATT&CK sub-techniques): don't duplicate the parent ID
       techniques.push({
         techniqueID:s.id, tactic:shortname, color:hex, comment:s.name,
         enabled:true, showSubtechniques:false, metadata:[], links:[]
@@ -853,6 +854,16 @@ function renderTree(){
     html+=esc(tacticName)+'</div>';
     html+='<div class="tt-technique-list">';
     visibleTechniques.forEach(function(t){
+      var isFlat=t.subtechniques.length===1 && t.subtechniques[0].id===t.id;
+      if(isFlat){
+        var flatActive=currentView && currentView.type==='sub' && currentView.subId===t.id;
+        html+='<div class="tt-technique" data-technique="'+esc(t.id)+'">';
+        html+='<div class="tt-technique-head'+(flatActive?' active':'')+'" onclick="selectTechnique(\''+esc(t.id)+'\')" style="cursor:pointer;">';
+        html+='<span style="display:flex;align-items:center;gap:7px;flex:1;min-width:0;">';
+        html+='<span class="tt-technique-id">'+esc(t.id)+'</span><span class="tt-technique-name">'+esc(t.name)+'</span>';
+        html+='<span class="tt-sub-progress-dot'+checklistDot(t.id)+'"></span></span></div></div>';
+        return;
+      }
       var subMatches=t.subtechniques.filter(function(s){ return !searchTerm || matchesSearch(t.id+' '+t.name) || subMatchesSearch(s); });
       var techActive=currentView && currentView.techniqueId===t.id && currentView.type==='technique';
       var tcCollapsed=!isTechniqueExpanded(t);
@@ -928,7 +939,11 @@ function selectTechnique(id,opts){
   document.getElementById('sidebarBackdrop').classList.remove('open');
   document.getElementById('detail').innerHTML='<div class="tt-empty"><p>Loading '+esc(id)+'…</p></div>';
   if(!(opts&&opts.fromHash))location.hash=id;
-  loadTechnique(id).then(renderTechniqueLanding).catch(renderError);
+  loadTechnique(id).then(function(full){
+    var isFlat=full.subtechniques.length===1 && full.subtechniques[0].id===full.id;
+    if(isFlat){ currentView={type:'sub',techniqueId:id,subId:id}; renderSubDetail(full,full.subtechniques[0]); }
+    else renderTechniqueLanding(full);
+  }).catch(renderError);
 }
 
 function selectSub(techId,subId,opts){
@@ -979,7 +994,7 @@ function goHome(){
 function crumb(techFull,subName){
   var html='<div class="tt-crumb"><a href="#" onclick="goHome();return false;">All Techniques</a><span>›</span>';
   html+='<a href="#" onclick="selectTechnique(\''+esc(techFull.id)+'\');return false;">'+esc(techFull.id)+' '+esc(techFull.name)+'</a>';
-  if(subName)html+='<span>›</span><span>'+esc(subName)+'</span>';
+  if(subName && subName!==techFull.id+' '+techFull.name)html+='<span>›</span><span>'+esc(subName)+'</span>';
   return html+'</div>';
 }
 

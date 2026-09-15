@@ -1,6 +1,6 @@
 {
   "generated": "2026-09-15",
-  "count": 9,
+  "count": 12,
   "techniques": [
     {
       "id": "T1003",
@@ -154,6 +154,47 @@
         { "id": "T1071.003", "name": "Mail Protocols" },
         { "id": "T1071.004", "name": "DNS" },
         { "id": "T1071.005", "name": "Publish/Subscribe Protocols" }
+      ]
+    },
+    {
+      "id": "T1548",
+      "name": "Abuse Elevation Control Mechanism",
+      "tactic": "TA0004",
+      "tactic_name": "Privilege Escalation",
+      "platforms": ["Windows", "Linux", "macOS", "IaaS", "Identity Provider", "Office Suite"],
+      "file": "techniques/T1548.json",
+      "subtechniques": [
+        { "id": "T1548.001", "name": "Setuid and Setgid" },
+        { "id": "T1548.002", "name": "Bypass User Account Control" },
+        { "id": "T1548.003", "name": "Sudo and Sudo Caching" },
+        { "id": "T1548.004", "name": "Elevated Execution with Prompt" },
+        { "id": "T1548.005", "name": "Temporary Elevated Cloud Access" },
+        { "id": "T1548.006", "name": "TCC Manipulation" }
+      ]
+    },
+    {
+      "id": "T1087",
+      "name": "Account Discovery",
+      "tactic": "TA0007",
+      "tactic_name": "Discovery",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "IaaS", "Identity Provider", "Office Suite", "SaaS"],
+      "file": "techniques/T1087.json",
+      "subtechniques": [
+        { "id": "T1087.001", "name": "Local Account" },
+        { "id": "T1087.002", "name": "Domain Account" },
+        { "id": "T1087.003", "name": "Email Account" },
+        { "id": "T1087.004", "name": "Cloud Account" }
+      ]
+    },
+    {
+      "id": "T1486",
+      "name": "Data Encrypted for Impact",
+      "tactic": "TA0040",
+      "tactic_name": "Impact",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "IaaS"],
+      "file": "techniques/T1486.json",
+      "subtechniques": [
+        { "id": "T1486", "name": "Data Encrypted for Impact" }
       ]
     }
   ]

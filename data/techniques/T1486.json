@@ -1,0 +1,168 @@
+{
+  "id": "T1486",
+  "name": "Data Encrypted for Impact",
+  "tactic": "TA0040",
+  "tactic_name": "Impact",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "ESXi",
+    "IaaS"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1486/",
+  "overview": "This is the technique every other pack in TTPHUNT is implicitly trying to prevent — an adversary encrypts files, virtual machine disks, or cloud storage objects and withholds the key, rendering the environment unusable until a ransom is paid or backups are restored. It has no MITRE sub-techniques; the technique itself is the full scope, spanning everything from a single workstation's Documents folder to an entire VMware ESXi cluster's datastore to encrypted objects sitting in an AWS S3 bucket. Because it sits at the very end of the intrusion lifecycle, by the time this technique fires the adversary has already completed reconnaissance, credential theft, and lateral movement — which means the actual hunting opportunity for this pack is almost entirely about catching the preparation phase before the encryption routine ever executes.",
+  "prerequisite_concepts": [
+    {
+      "term": "By the time encryption starts, the hunt has already failed — the goal is catching what comes before it",
+      "explanation": "Modern ransomware operators spend days to weeks inside an environment before triggering encryption: stealing credentials, mapping the network, disabling backups, and exfiltrating data for double-extortion, all before the actual file-encryption routine ever runs. Every detection query in this pack is deliberately built around the preparation signals (backup/shadow-copy deletion, mass file-permission changes, security-tooling tampering) rather than the encryption event itself, because a hunt that only fires once mass encryption is underway has already lost the race against the organization's own recovery time objective."
+    },
+    {
+      "term": "Worm-like propagation means one compromised host becomes the whole environment",
+      "explanation": "Modern ransomware families don't wait to be manually deployed host-by-host — they self-propagate using exactly the techniques covered elsewhere in TTPHUNT (T1078 valid account reuse, T1021.002 SMB admin shares, T1003-family credential dumping) to spread the encryption payload across every reachable system from a single initial foothold. That's why this pack's related-technique links point backward into nearly every other tactic in the tool: T1486 is rarely a standalone technique to hunt in isolation, it's the terminal event of a chain that started somewhere else, days earlier."
+    },
+    {
+      "term": "Backups are the actual circuit-breaker, and adversaries know it",
+      "explanation": "Every major ransomware operator explicitly targets Volume Shadow Copies, Windows Server Backup catalogs, and any accessible backup infrastructure before triggering encryption, specifically because a defender with an intact, isolated backup can simply restore and refuse to pay — the ransom model doesn't work against a victim who never needed the decryption key. That single fact is why 'is backup deletion/tampering activity happening' is treated as the highest-priority signal in this entire pack: it's the one preparation step that, caught in time, defeats the adversary's entire business model regardless of whether encryption itself gets stopped."
+    },
+    {
+      "term": "The target has expanded well beyond the Windows file share",
+      "explanation": "Early ransomware only mattered to Windows endpoint and file-server data; current campaigns explicitly target VMware ESXi hosts (encrypting .vmdk/.vmx files directly on the hypervisor, which can take down dozens of VMs from one compromised host) and cloud object storage (using AWS S3's own server-side-encryption-with-customer-provided-keys feature against the victim, so the 'encryption' uses Amazon's own legitimate feature rather than adversary-supplied crypto). Any hunt program that only instruments Windows endpoints is now blind to two of this technique's fastest-growing and highest-blast-radius variants."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1486",
+      "name": "Data Encrypted for Impact",
+      "tactic": "TA0040",
+      "tactic_name": "Impact",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "IaaS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1486/",
+      "overview": "Ransomware operators encrypt files on local drives, network shares, ESXi datastores, or cloud storage and withhold the decryption key for financial extortion or, in destructive/wiper variants, with no intention of ever providing one. Preparation almost always includes deleting Volume Shadow Copies and backup catalogs, disabling security tooling, and — in worm-capable families — propagating to every reachable host using stolen credentials and admin-share access before the encryption routine ever fires on any single system.",
+      "concepts": [
+        {
+          "term": "Shadow copy and backup deletion is the single highest-value pre-encryption signal",
+          "explanation": "`vssadmin delete shadows`, `wbadmin delete catalog`, and direct tampering with backup agent services appear across nearly every major ransomware family's playbook because they're cheap for the adversary to run and devastating if they succeed unnoticed — a defender who still has shadow copies or an intact backup can simply restore, so removing that option is one of the last things standing between the adversary and a guaranteed payout. This is why 'vssadmin or wbadmin invoked with delete/resize arguments' belongs in the highest-priority detection tier of any ransomware hunt program, ahead of anything that only fires once mass file writes begin."
+        },
+        {
+          "term": "Per-file hybrid encryption is a design choice, and it produces a detectable file-write signature",
+          "explanation": "Families like Conti and LockBit 3.0 don't encrypt each file with the same key — they generate a unique symmetric key per file (AES-256 or ChaCha20), then wrap that key with the operator's RSA public key and store it alongside the encrypted file, which is both cryptographically sound and produces a very specific, very fast, very high-volume pattern of file rewrites across many directories in a short window. That volume/velocity signature (a process rewriting hundreds of files per second with new, uncommon extensions) is detectable independent of knowing which specific ransomware family is involved, since virtually all of them share this structural approach."
+        },
+        {
+          "term": "ESXi and cloud-storage encryption bypass endpoint EDR entirely",
+          "explanation": "A hypervisor encrypting its own .vmdk/.vmx files, or an attacker using AWS's legitimate SSE-C feature to encrypt S3 objects with a key only they hold, both happen entirely outside the reach of any endpoint agent running inside a guest VM or on a traditional workstation — there's no process on a monitored endpoint to catch, because the encryption is happening at the infrastructure layer itself. Hunting these variants requires hypervisor-level (SSH/vSphere API audit) and cloud-control-plane (CloudTrail) visibility specifically, which most ransomware playbooks built purely around Windows EDR telemetry simply don't have."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "LockBit 3.0",
+          "activity": "Encrypts victim files using AES-256, ChaCha20, or RSA-2048 depending on configuration, after deleting shadow copies and disabling security tooling."
+        },
+        {
+          "actor": "BlackCat / ALPHV",
+          "activity": "Encrypts Windows, Linux, and VMware ESXi virtual machine instances directly, extending impact across an entire virtualized environment from a single compromised hypervisor host."
+        },
+        {
+          "actor": "Conti",
+          "activity": "Uses a unique per-file AES-256 key bundled with an RSA-4096 victim-specific wrapping key, and is known to have propagated worm-style across networks using stolen domain credentials."
+        },
+        {
+          "actor": "Indrik Spider",
+          "activity": "Deployed WastedLocker and related ransomware, deliberately disabling backup and recovery services before triggering mass encryption."
+        },
+        {
+          "actor": "Sandworm Team",
+          "activity": "Deployed destructive, wiper-style encryption payloads (associated with NotPetya-class tooling) with no functional decryption path, prioritizing disruption over extortion."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon Event 1 (Process Create)",
+          "detail": "Execution of vssadmin.exe, wbadmin.exe, bcdedit.exe, or wmic.exe with arguments consistent with shadow-copy deletion, backup-catalog removal, or disabling recovery options (delete shadows, delete catalog, recoveryenabled no)."
+        },
+        {
+          "source": "Sysmon Event 11 (File Create) / EDR file-write telemetry",
+          "detail": "A single process rewriting a very high volume of files across many directories in a short window, especially with a new, previously-unseen file extension appended."
+        },
+        {
+          "source": "ESXi shell/SSH and vSphere API audit logs",
+          "detail": "SSH or vSphere API sessions issuing commands against .vmdk/.vmx/.log files in a VMFS datastore, or unexpected enablement of the ESXi Shell/SSH services themselves shortly before mass file operations."
+        },
+        {
+          "source": "AWS CloudTrail",
+          "detail": "S3 PutObject calls specifying server-side encryption with customer-provided keys (SSE-C) at unusual volume against a bucket, or bucket policy changes restricting access shortly beforehand."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Shadow Copy or Backup Catalog Deletion",
+          "description": "Flags the single highest-value ransomware pre-encryption signal: shadow copy or Windows Server Backup catalog deletion via built-in utilities.",
+          "query": "title: Volume Shadow Copy or Backup Catalog Deletion\nid: 4e9d7a3c-8f2b-4c6d-9e1a-7c3f9d4e8b60\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_vss:\n    Image|endswith: '\\vssadmin.exe'\n    CommandLine|contains: 'delete'\n    CommandLine|contains: 'shadows'\n  selection_wbadmin:\n    Image|endswith: '\\wbadmin.exe'\n    CommandLine|contains:\n      - 'delete catalog'\n      - 'delete systemstatebackup'\n  selection_bcdedit:\n    Image|endswith: '\\bcdedit.exe'\n    CommandLine|contains: 'recoveryenabled no'\n  condition: selection_vss or selection_wbadmin or selection_bcdedit\nfalsepositives:\n  - Approved storage-reclamation maintenance scripts that intentionally prune old shadow copies on a defined schedule\nlevel: critical\ntags:\n  - attack.impact\n  - attack.t1486"
+        },
+        {
+          "language": "KQL",
+          "title": "High-Velocity File Rewrite With New Extension Across Many Directories",
+          "description": "Surfaces a single process rewriting an unusually high number of files with a previously-unseen extension in a short window, the core signature of active mass encryption.",
+          "query": "DeviceFileEvents\n| where ActionType == \"FileModified\"\n| where FileName !endswith \".tmp\"\n| summarize FileCount = count(), DistinctFolders = dcount(FolderPath), Extensions = make_set(tostring(split(FileName, \".\")[-1])) by InitiatingProcessFileName, DeviceId, bin(Timestamp, 5m)\n| where FileCount > 200 and DistinctFolders > 10\n| order by FileCount desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "ESXi Datastore File Encryption via SSH or vSphere API",
+          "description": "Flags shell or API-driven modification of .vmdk/.vmx files on an ESXi host, consistent with hypervisor-level ransomware encryption.",
+          "query": "title: ESXi VMDK-VMX Mass Modification via Shell\nid: 6f3c9a7d-4e8b-4c2a-9d6e-3f8c9d4e7a60\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: esxi\n  service: shell\ndetection:\n  selection:\n    CommandLine|contains:\n      - '.vmdk'\n      - '.vmx'\n    Shell: 'ssh'\n  filter_known:\n    User: 'vpxuser'\n  condition: selection and not filter_known\nfalsepositives:\n  - Legitimate storage vMotion or datastore migration operations performed by an authorized administrator outside the vCenter-managed workflow\nlevel: high\ntags:\n  - attack.impact\n  - attack.t1486"
+        }
+      ],
+      "false_positives": [
+        "Approved backup-maintenance or storage-reclamation scripts that intentionally prune old shadow copies or backup sets on a documented schedule",
+        "Legitimate bulk file operations such as a large-scale file-format migration, archival compression job, or antivirus quarantine sweep",
+        "Authorized ESXi storage vMotion or datastore maintenance performed outside the normal vCenter-orchestrated workflow"
+      ],
+      "response_steps": [
+        "Isolate every affected host and any host reachable from it immediately — worm-capable ransomware propagates faster than most manual containment processes, so err toward broad network isolation first",
+        "Do not power off encrypting virtual machines if avoidable; some strains' in-memory keys can be recovered from a live memory capture but are lost on shutdown",
+        "Identify and preserve the ransom note and any sample encrypted files for identification against known-decryptor databases (e.g., No More Ransom) before any recovery action",
+        "Verify backup integrity and isolation before beginning restoration — if backups were reachable from the compromised environment, treat them as potentially compromised or deleted until confirmed otherwise",
+        "Assume credential compromise occurred well before encryption began, and force a full credential reset across every account with any plausible exposure, not just the accounts on visibly-encrypted hosts"
+      ],
+      "mitigations": [
+        {
+          "id": "M1053",
+          "name": "Data Backup",
+          "detail": "Maintain regular, tested backups stored off-system and logically or physically isolated from the production environment an adversary could otherwise reach and delete alongside primary data."
+        },
+        {
+          "id": "M1040",
+          "name": "Behavior Prevention on Endpoint",
+          "detail": "Enable cloud-delivered protection and Attack Surface Reduction rules to block ransomware-characteristic file-write behavior before mass encryption completes; restrict SSE-C usage on cloud storage via IAM policy where not explicitly required."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Restrict which accounts can delete shadow copies, modify backup catalogs, or access ESXi Shell/SSH, since nearly every variant of this technique depends on that access being reachable from a compromised low-privilege foothold."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1078",
+          "name": "Valid Accounts",
+          "relation": "The credential-reuse mechanism worm-capable ransomware typically uses to propagate the encryption payload across every reachable host before triggering it."
+        },
+        {
+          "id": "T1021.002",
+          "name": "SMB/Windows Admin Shares",
+          "relation": "A common lateral-propagation path ransomware uses to push its encryptor binary to additional hosts from one initial foothold."
+        },
+        {
+          "id": "T1053.007",
+          "name": "Container Orchestration Job",
+          "relation": "Increasingly used to deploy the encryption payload at scale across a containerized environment's scheduled workloads rather than host-by-host."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A host executes vssadmin, wbadmin, or bcdedit with shadow-copy deletion, backup-catalog removal, or recovery-disabling arguments, at any time, on any production system.",
+        "rationale": "Set this alert to page immediately rather than queue for triage -- unlike almost every other hunt in this tool, the cost of a false positive here (a legitimate maintenance script) is minutes of an analyst's time, while the cost of a missed true positive is the organization's entire recovery posture."
+      }
+    }
+  ]
+}
