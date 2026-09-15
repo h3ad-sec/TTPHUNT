@@ -1,0 +1,329 @@
+{
+  "id": "T1053",
+  "name": "Scheduled Task/Job",
+  "tactic": "TA0003",
+  "tactic_name": "Persistence",
+  "platforms": ["Windows", "Linux", "macOS", "ESXi", "Containers", "Network Devices"],
+  "mitre_url": "https://attack.mitre.org/techniques/T1053/",
+  "overview": "Every major platform ships a way to run code on a schedule rather than once, and adversaries use exactly that legitimate capability to make execution survive a reboot, a logoff, or the original delivery vector being cleaned up entirely. MITRE lists this technique under three tactics at once — Execution, Persistence, and Privilege Escalation — because a scheduled task doesn't just guarantee code runs again later, it can also run under a more privileged context than the account that scheduled it. The 5 sub-techniques below split by platform and scheduler: Windows Task Scheduler and the legacy at utility, Linux/macOS/ESXi cron, Linux systemd timers, and Kubernetes CronJobs for containerized environments.",
+  "prerequisite_concepts": [
+    {
+      "term": "Recurring execution is the actual value, not the delay",
+      "explanation": "A one-time delayed execution is barely more useful to an attacker than running immediately. What makes scheduling worth the effort is recurrence and reboot-survival: a task that fires every few minutes, or specifically at startup, keeps re-establishing a foothold even after the host is patched, the user logs off, or the original phishing payload is deleted from disk. Every sub-technique in this pack is really being hunted for its persistence value, not its scheduling mechanics."
+    },
+    {
+      "term": "The universal shape: a definition plus a trigger",
+      "explanation": "Every scheduler covered here splits 'what to run' from 'when to run it' into two linked artifacts — a Windows scheduled task's action and trigger, a crontab line's command and time fields, a systemd .service paired with a .timer, a Kubernetes Job template paired with a CronJob's schedule. That consistent shape is exactly why detection has to correlate both halves: a hunt that only watches for new task/unit/crontab creation without also checking what it actually runs will miss the part that tells you whether it's malicious."
+        },
+    {
+      "term": "Why this is a privilege-escalation vector, not just persistence",
+      "explanation": "Several of these mechanisms let a task execute under a more privileged context than the user who scheduled it — a Windows task set to run as SYSTEM, a cron job dropped by a low-privilege web shell into a root-owned crontab, a Kubernetes CronJob whose pod spec requests a privileged container. Scheduling something is often the easy part; getting it to run as someone more powerful than you is the actual objective, which is why this technique sits under Privilege Escalation as much as Persistence."
+    },
+    {
+      "term": "Hiding from the tool's own management interface, not just from logs",
+      "explanation": "Windows Task Scheduler specifically can be made to hide a task from both the Task Scheduler GUI and schtasks /query by deleting or corrupting its Security Descriptor registry value, while the task keeps running exactly as scheduled underneath. That means 'the task doesn't show up when I look' is not the same as 'the task doesn't exist' — a hunt has to check the underlying registry/filesystem artifacts directly rather than trusting each scheduler's own enumeration tooling."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1053.002",
+      "name": "At",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1053/002/",
+      "overview": "The at utility schedules one-time or recurring execution on Windows, Linux, and macOS alike. Microsoft deprecated it on Windows in favor of schtasks, but at.exe still ships and still works, internally creating its job through the same Task Scheduler subsystem. On Linux/macOS, whether a non-root user can use it at all is governed by the at.allow and at.deny files.",
+      "concepts": [
+        {
+          "term": "Deprecated doesn't mean gone, or unmonitored",
+          "explanation": "Windows keeps shipping at.exe for backward compatibility even though schtasks and the Task Scheduler GUI are the documented modern path. Precisely because it's legacy and less commonly used by legitimate administrators, at.exe activity draws less routine scrutiny than schtasks does in most environments — which is exactly why it still shows up in real intrusions despite being the 'old' way to do this."
+        },
+        {
+          "term": "at.allow / at.deny as the access gate on Linux/macOS",
+          "explanation": "Unlike cron, which uses its own separate cron.allow/cron.deny pair, at gates access through its own at.allow/at.deny files. If neither file exists on a given host, only the superuser can schedule an at job at all — which means on a default-configured Linux host, any at job's mere existence already implies root-level access was used to create it, regardless of who the job appears to belong to."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "APT18", "activity": "Used the native Windows at task scheduler tool for execution on a victim network." },
+        { "actor": "BRONZE BUTLER", "activity": "Employed at to register scheduled tasks executing malware during lateral movement." },
+        { "actor": "Threat Group-3390", "activity": "Utilized at to schedule tasks running self-extracting RAR archives that installed HTTPBrowser or PlugX." },
+        { "actor": "CrackMapExec", "activity": "Capable of setting scheduled tasks via at for remote command execution." }
+      ],
+      "data_sources": [
+        { "source": "Registry (Windows)", "detail": "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\At1 and similarly-numbered keys, created when at.exe registers a job." },
+        { "source": "Sysmon 1 / Security 4688", "detail": "at.exe process creation with its schedule and command arguments." },
+        { "source": "auditd / syslog (Linux, macOS)", "detail": "atd job execution, and modification of /etc/at.allow or /etc/at.deny themselves, which is itself worth watching." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "at.exe Execution on Windows",
+          "description": "Flags at.exe process creation, a legacy scheduling path that's rare in modern, properly-migrated environments.",
+          "query": "title: Legacy at.exe Scheduled Task Creation\nid: 6d4e8a3c-9f2b-4c7e-8a1d-5b3f9c6e4a80\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith: '\\at.exe'\n  condition: selection\nfalsepositives:\n  - Legacy scripts or documentation that still reference at.exe in environments that haven't fully migrated to schtasks\nlevel: medium\ntags:\n  - attack.execution\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1053.002"
+        }
+      ],
+      "false_positives": [
+        "Legacy administrative scripts in environments that haven't fully migrated off at.exe to schtasks",
+        "Rare legitimate Linux/macOS batch-processing workflows still using at instead of cron for one-off delayed jobs"
+      ],
+      "response_steps": [
+        "Identify the scheduled command and confirm it against any legitimate change record",
+        "On Linux/macOS, check whether at.allow/at.deny exist and who they permit, since their absence implies root-level creation",
+        "Remove the job and check for the same TaskCache registry pattern on other hosts if this was pushed via a shared script",
+        "Confirm whether schtasks is the organization's documented standard, and treat any at.exe usage as worth a policy conversation even when benign"
+      ],
+      "mitigations": [
+        { "id": "M1028", "name": "Operating System Configuration", "detail": "Force tasks to run under an authenticated account context rather than SYSTEM where possible; disable server-operator scheduling via Group Policy." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict scheduling-priority rights to the Administrators group." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Limit which users can schedule tasks; manage Linux/macOS access explicitly via at.allow/at.deny." }
+      ],
+      "related": [
+        { "id": "T1053.005", "name": "Scheduled Task", "relation": "The modern, actively-maintained Windows scheduling mechanism at.exe was deprecated in favor of." }
+      ],
+      "hypothesis": {
+        "statement": "at.exe executes on a Windows host, or an at job is scheduled on a Linux/macOS host where neither at.allow nor at.deny exists.",
+        "rationale": "Because schtasks is the documented modern path on Windows, any at.exe execution in an environment that has standardized on it is itself an anomaly worth a look, independent of what the job actually runs."
+      }
+    },
+    {
+      "id": "T1053.003",
+      "name": "Cron",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Linux", "macOS", "ESXi"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1053/003/",
+      "overview": "cron reads scheduling entries from crontab files — per-user and system-wide — and executes the associated command at each specified interval. On ESXi specifically, there's no friendly per-user crontab command; an attacker with root edits /var/spool/cron/crontabs/root directly to add a job.",
+      "concepts": [
+        {
+          "term": "@reboot: the persistence-specific trigger malware actually wants",
+          "explanation": "Alongside standard interval scheduling, cron supports a special @reboot string that runs a job exactly once at system startup rather than repeatedly. That's precisely the trigger malware authors reach for, since it guarantees re-execution after every restart without needing a real recurring interval that might draw attention through sheer execution frequency."
+        },
+        {
+          "term": "Why ESXi cron abuse is unusually quiet",
+          "explanation": "Standard Linux cron abuse at least involves invoking the crontab command, which is itself a process-creation event to catch. ESXi's cron implementation instead expects direct edits to a single root-owned crontab file — an attacker with root can modify /var/spool/cron/crontabs/root with any text editor or even a redirect, with no crontab utility invocation to catch at all. The file write is the only signal; there's no command execution to correlate against."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Rocke", "activity": "Installs cron jobs downloading and executing cryptomining files from attacker infrastructure." },
+        { "actor": "Kinsing", "activity": "Downloads and executes shell scripts via crontab entries running every minute." },
+        { "actor": "GoldMax", "activity": "Employs crontab entries with @reboot for execution at system startup." },
+        { "actor": "APT5", "activity": "Modifies crontab files, including entries under /var/cron/tabs/." },
+        { "actor": "Xbash", "activity": "Creates cron jobs for Linux persistence as part of its worming behavior." }
+      ],
+      "data_sources": [
+        { "source": "auditd", "detail": "Writes to /etc/crontab, /etc/cron.d/, /etc/cron.allow, /etc/cron.deny, or any user's crontab file, especially by a process other than the crontab binary itself." },
+        { "source": "syslog", "detail": "cron itself logs every job execution with a CRON tag, which is the most direct record of what actually ran and when, independent of how the crontab entry was created." },
+        { "source": "ESXi", "detail": "Direct modification timestamps on /var/spool/cron/crontabs/root, correlated against auth.log for the session that touched it." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Crontab Modification by Non-Interactive or Unexpected Process",
+          "description": "Flags crontab file changes made by something other than the crontab utility itself, a common pattern for scripted/malware-driven persistence.",
+          "query": "title: Crontab Modified by Unexpected Process\nid: 8f3a6c9d-4e7b-4c2a-9d1f-6b3a9c8e4f30\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: linux\ndetection:\n  selection:\n    TargetFilename|contains:\n      - '/etc/crontab'\n      - '/etc/cron.d/'\n      - '/var/spool/cron'\n  filter_crontab_binary:\n    Image|endswith: '/crontab'\n  condition: selection and not filter_crontab_binary\nfalsepositives:\n  - Configuration management tools (Ansible, Puppet, Chef) that legitimately template crontab files directly rather than through the crontab command\nlevel: medium\ntags:\n  - attack.execution\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1053.003"
+        }
+      ],
+      "false_positives": [
+        "Configuration management tooling (Ansible, Puppet, Chef, cloud-init) that templates crontab files directly rather than invoking the crontab command",
+        "Legitimate backup or maintenance scripts that self-install a cron entry as part of their documented setup process"
+      ],
+      "response_steps": [
+        "Pull the full crontab entry and identify what it downloads or executes",
+        "Check for an @reboot trigger specifically, since that indicates a persistence objective rather than a one-off scheduled task",
+        "On ESXi, correlate the crontab file's modification time against auth.log to identify the responsible session",
+        "Remove the entry and check other hosts sharing the same configuration-management baseline for the same injected line"
+      ],
+      "mitigations": [
+        { "id": "M1047", "name": "Audit", "detail": "Monitor /var/log for cron schedule changes; verify syslog is actually capturing CRON execution entries." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Control cron access explicitly via /etc/cron.allow and /etc/cron.deny." }
+      ],
+      "related": [
+        { "id": "T1053.006", "name": "Systemd Timers", "relation": "The more modern Linux scheduling alternative to cron, increasingly seen alongside or instead of it." },
+        { "id": "T1059.004", "name": "Unix Shell", "relation": "The command a malicious cron entry almost always ultimately invokes." }
+      ],
+      "hypothesis": {
+        "statement": "A crontab file (/etc/crontab, /etc/cron.d/*, or a user/root crontab) is modified by a process other than the crontab binary itself, or a new entry uses the @reboot trigger.",
+        "rationale": "Scope the initial hunt to the @reboot trigger specifically if volume is a concern -- it's a much smaller, higher-signal subset than all crontab changes, since legitimate recurring maintenance jobs rarely need to fire at startup specifically."
+      }
+    },
+    {
+      "id": "T1053.005",
+      "name": "Scheduled Task",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1053/005/",
+      "overview": "Windows Task Scheduler is reachable via the schtasks command line, the Task Scheduler GUI, COM/WMI, .NET wrappers, or PowerShell's Invoke-CimMethod against the PS_ScheduledTask WMI class. Adversaries use it for persistence (run at logon or on an interval), lateral movement (schedule execution on a remote host using stolen credentials), and privilege escalation (a task configured to run as SYSTEM).",
+      "concepts": [
+        {
+          "term": "Two logs, both off by default",
+          "explanation": "Security 4698 (task created) requires the 'Audit Other Object Access Events' subcategory to be explicitly enabled — it isn't on by default. The Microsoft-Windows-TaskScheduler/Operational log tells a richer story (106 created, 140 updated, 141 deleted, 200 executed, 201 execution completed) but also isn't audited out of the box. In practice, most environments have neither turned on until someone deliberately does it, which is worth confirming before assuming this technique is already covered by existing logging."
+        },
+        {
+          "term": "Hiding a task from its own management tools",
+          "explanation": "Deleting or corrupting a task's Security Descriptor (SD) registry value under the Task Scheduler's own registry tree makes that task invisible to both the Task Scheduler GUI and schtasks /query, while it continues to fire exactly as scheduled underneath. This is a distinctly Windows-specific evasion trick with no equivalent among cron, systemd timers, or Kubernetes CronJobs — none of those schedulers have an analogous 'hide from your own enumeration tool' registry knob."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "Sandworm Team", "activity": "Leveraged scheduled tasks via GPO to execute CaddyWiper during the 2022 Ukraine Electric Power Attack." },
+        { "actor": "Lazarus Group", "activity": "Employed schtasks for persistence, including periodic execution of remote XSL scripts." },
+        { "actor": "Wizard Spider", "activity": "Maintained persistence through scheduled task creation." },
+        { "actor": "FIN7", "activity": "Established persistence using scheduled tasks alongside PowerShell Empire." },
+        { "actor": "NotPetya", "activity": "Used scheduled tasks as part of its self-propagation and persistence mechanism." }
+      ],
+      "data_sources": [
+        { "source": "Security 4698 / 4699 / 4702", "detail": "Scheduled task created / deleted / updated -- requires 'Audit Other Object Access Events' to be explicitly enabled." },
+        { "source": "Microsoft-Windows-TaskScheduler/Operational log", "detail": "Events 106 (created), 140 (updated), 141 (deleted), 200 (executed), 201 (execution completed) -- the fuller lifecycle, also not audited by default." },
+        { "source": "Sysmon 1", "detail": "Process creation from svchost.exe or taskeng.exe as the parent, the typical execution-time signature of a fired scheduled task." }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Scheduled Task Created with Suspicious Trigger or Action",
+          "description": "Flags schtasks.exe task creation specifying an ONLOGON/ONSTART trigger paired with an executable in a non-standard path.",
+          "query": "DeviceProcessEvents\n| where Timestamp > ago(24h)\n| where FileName =~ \"schtasks.exe\"\n| where ProcessCommandLine has \"/create\"\n| where ProcessCommandLine has_any (\"onlogon\", \"onstart\", \"/ru system\")\n| project Timestamp, DeviceName, AccountName, ProcessCommandLine\n| order by Timestamp desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "Scheduled Task Created to Run as SYSTEM",
+          "description": "Flags schtasks.exe creating a task explicitly configured to run as SYSTEM, a common privilege-escalation pattern.",
+          "query": "title: Scheduled Task Created to Run as SYSTEM\nid: 4a7c9e3d-6b8f-4c2a-9d1e-7f3b6c9e4a90\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_img:\n    Image|endswith: '\\schtasks.exe'\n  selection_cmd:\n    CommandLine|contains: '/create'\n  selection_ru:\n    CommandLine|contains|all:\n      - '/ru'\n      - 'system'\n  condition: all of selection_*\nfalsepositives:\n  - Legitimate administrative or deployment tooling that intentionally schedules SYSTEM-level maintenance tasks\nlevel: medium\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1053.005"
+        }
+      ],
+      "false_positives": [
+        "Legitimate software installers and deployment tooling that schedule SYSTEM-level maintenance or update-check tasks",
+        "IT-managed logon scripts and startup tasks that are a normal, documented part of the endpoint build"
+      ],
+      "response_steps": [
+        "Pull the full task definition (action, trigger, run-as context) via schtasks /query /tn <name> /xml",
+        "Check whether Security 4698/Operational-log auditing was actually enabled before assuming this technique would have been caught historically",
+        "If the task appears hidden (missing from Task Scheduler GUI/schtasks output but present in the registry), treat that as a strong standalone indicator",
+        "Remove the task and check for the same task name or binary path across other hosts if deployed via GPO or a shared script"
+      ],
+      "mitigations": [
+        { "id": "M1028", "name": "Operating System Configuration", "detail": "Configure tasks to run under an authenticated account context rather than SYSTEM where possible; disable 'Allow server operators to schedule tasks' via GPO." },
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict 'Increase Scheduling Priority' rights to the Administrators group." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Restrict remote task creation to authorized administrators; limit user privileges that enable escalation." }
+      ],
+      "related": [
+        { "id": "T1053.002", "name": "At", "relation": "The legacy scheduling mechanism this one superseded, still worth checking if schtasks activity alone comes up empty." },
+        { "id": "T1021.002", "name": "SMB/Windows Admin Shares", "relation": "Scheduled task creation is one of the two common execution triggers paired with an SMB-delivered payload." }
+      ],
+      "hypothesis": {
+        "statement": "schtasks.exe creates a task with an ONLOGON or ONSTART trigger targeting an executable outside Program Files/Windows, or explicitly configured to run as SYSTEM.",
+        "rationale": "Confirm Security 4698 and the Task Scheduler Operational log are both actually enabled in your environment before relying on this hypothesis -- neither is on by default, and a surprising number of environments assume this coverage exists without ever having turned it on."
+      }
+    },
+    {
+      "id": "T1053.006",
+      "name": "Systemd Timers",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Linux"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1053/006/",
+      "overview": "Systemd timers are .timer unit files that trigger a same-named .service unit on a calendar schedule or a time span relative to some starting point -- a more modern alternative to cron. System-wide timers live under /etc/systemd/system/ or /usr/lib/systemd/system/; user-level ones under ~/.config/systemd/user/.",
+      "concepts": [
+        {
+          "term": "A timer alone does nothing -- the pairing is the whole mechanism",
+          "explanation": "A .timer file only defines a schedule; it has no payload of its own. It must be paired with a same-base-name .service file that defines what actually runs. A hunt built around 'new .timer file created' without also checking for its paired .service file is only seeing half the persistence mechanism and will miss exactly what the timer was set up to execute."
+        },
+        {
+          "term": "PID 1 ancestry as the tell",
+          "explanation": "Because systemd itself runs as PID 1, any process it launches to fulfil a timer traces its parent lineage straight back to PID 1, running as root, regardless of which user actually created the timer/service pair. That's precisely the correlation MITRE's own detection strategy calls for: unit file creation or modification paired with abnormal child-process execution rooted at PID 1."
+        }
+      ],
+      "procedure_examples": [
+        { "actor": "CanisterWorm", "activity": "Registered itself as a systemd service on Kubernetes nodes to maintain persistence." },
+        { "actor": "Mini Shai-Hulud", "activity": "Created a gh-token-monitor daemon in a user systemd directory polling GitHub every 60 seconds, and a separate kitty-monitor.service for host persistence." }
+      ],
+      "data_sources": [
+        { "source": "auditd", "detail": "Creation or modification of .timer/.service files under /etc/systemd/system/, /usr/lib/systemd/system/, or ~/.config/systemd/user/." },
+        { "source": "Process telemetry", "detail": "A new process with PID 1 (systemd) as its parent, correlated against a recently created or modified timer/service pair." },
+        { "source": "journalctl", "detail": "systemd's own unit start/stop logging, which records exactly when a given .service fired and its exit status." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "New Systemd Timer and Service Unit Pair",
+          "description": "Flags creation of a .timer file alongside its paired .service file in a system-wide unit directory, outside of package-manager-driven installs.",
+          "query": "title: New Systemd Timer/Service Unit Created\nid: 5b9d3e7a-2f4c-4a8e-9d6b-3f7a2c9e5d20\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: linux\ndetection:\n  selection:\n    TargetFilename|endswith:\n      - '.timer'\n      - '.service'\n    TargetFilename|contains:\n      - '/etc/systemd/system/'\n      - '/usr/lib/systemd/system/'\n  filter_package_manager:\n    Image|endswith:\n      - '/dpkg'\n      - '/rpm'\n      - '/apt'\n      - '/yum'\n  condition: selection and not filter_package_manager\nfalsepositives:\n  - Legitimate software installation via a package manager, which routinely drops new unit files as part of normal application setup\nlevel: medium\ntags:\n  - attack.execution\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1053.006"
+        }
+      ],
+      "false_positives": [
+        "Legitimate software installed via a package manager (apt/yum/dnf), which routinely creates its own .timer/.service pairs as part of normal setup",
+        "IT-managed configuration deployment (Ansible, Puppet) that legitimately templates systemd units as part of approved automation"
+      ],
+      "response_steps": [
+        "Locate and read both the .timer and its paired .service file to understand the schedule and the actual command",
+        "Check journalctl for that unit's execution history to establish how long it's been running and how often",
+        "Disable and remove both unit files (systemctl disable/stop then delete), not just the .timer",
+        "Check for the same unit name across other Linux hosts sharing a configuration-management baseline"
+      ],
+      "mitigations": [
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Restrict root access and prevent unauthorized creation or modification of systemd timer files." },
+        { "id": "M1022", "name": "Restrict File and Directory Permissions", "detail": "Limit read/write access to .timer unit files to authorized administrators." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Control access to systemctl and systemd-run for legitimate users only." }
+      ],
+      "related": [
+        { "id": "T1053.003", "name": "Cron", "relation": "The older Linux scheduling mechanism systemd timers are increasingly used alongside or in place of." }
+      ],
+      "hypothesis": {
+        "statement": "A new .timer file and its paired .service file appear under /etc/systemd/system/ or /usr/lib/systemd/system/ outside of a package-manager-driven install.",
+        "rationale": "Exclude package-manager-initiated writes first -- most .timer/.service creation on a typical Linux host is entirely legitimate software installation, and without that exclusion this hunt drowns in noise before it reaches anything worth investigating."
+      }
+    },
+    {
+      "id": "T1053.007",
+      "name": "Container Orchestration Job",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Containers"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1053/007/",
+      "overview": "Kubernetes CronJobs schedule Jobs, which in turn run Pods, on a recurring basis -- the cluster-native equivalent of cron. Adversaries create a CronJob to redeploy a malicious container repeatedly across cluster nodes, giving them a persistence mechanism that survives individual pod restarts or even node rescheduling.",
+      "concepts": [
+        {
+          "term": "Self-healing as an attacker feature",
+          "explanation": "Kubernetes' own reconciliation loop exists to keep a desired number of replicas running at all times -- a legitimate reliability feature that becomes a persistence mechanism in reverse once a CronJob is redeploying a malicious pod. Killing that pod doesn't end the problem the way killing a process on a single host would: the cluster itself will actively work to bring it back, which is a fundamentally stronger persistence guarantee than anything else in this pack."
+        },
+        {
+          "term": "A cluster-wide concern, not a host-wide one",
+          "explanation": "A single malicious CronJob object in the Kubernetes API can have its resulting pods scheduled onto whichever node the scheduler happens to pick -- containment has to happen at the API/RBAC layer (deleting the CronJob object itself, revoking the identity or service account that created it) rather than by cleaning up any one node, since the node that ran it today may not be the node it runs on tomorrow."
+        }
+      ],
+      "procedure_examples": [],
+      "data_sources": [
+        { "source": "Kubernetes audit logs", "detail": "CronJob creation ('create' verb against the batch/v1 CronJob resource), especially by an identity outside the expected CI/CD or platform-team service accounts." },
+        { "source": "Kubernetes audit logs", "detail": "Job and Pod creation events attributable to a CronJob's controller reference, useful for tracing which CronJob actually spawned a given suspicious pod." }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "CronJob Created by Unexpected Identity",
+          "description": "Flags creation of a Kubernetes CronJob object from an identity outside the platform's known CI/CD or automation service accounts.",
+          "query": "title: Kubernetes CronJob Created by Unexpected Identity\nid: 9e6b4a8c-3f7d-4c2a-9d6e-8b3a9c7f4d40\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: kubernetes\ndetection:\n  selection:\n    objectRef.resource: 'cronjobs'\n    verb: 'create'\n  filter_cicd:\n    user.username|startswith: 'system:serviceaccount:ci-cd:'\n  condition: selection and not filter_cicd\nfalsepositives:\n  - Legitimate platform-team automation and CI/CD pipelines that create scheduled jobs as part of normal operations\nlevel: medium\ntags:\n  - attack.execution\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1053.007"
+        }
+      ],
+      "false_positives": [
+        "Legitimate platform-team automation, backup jobs, or CI/CD pipelines that create CronJobs as part of normal cluster operations",
+        "Scheduled maintenance jobs (log rotation, certificate renewal) deployed via Helm charts or GitOps tooling"
+      ],
+      "response_steps": [
+        "Delete the malicious CronJob object first, not just the currently-running pod -- otherwise the cluster will simply recreate it on the next scheduled interval",
+        "Identify and revoke the identity/service account that created it, and audit what else that identity has access to",
+        "Check the Job's pod spec for privileged container flags or hostPath mounts, which indicate a broader host-escape objective beyond just persistence",
+        "Review RBAC bindings that allowed CronJob creation by that identity in the first place, and scope them down"
+      ],
+      "mitigations": [
+        { "id": "M1026", "name": "Privileged Account Management", "detail": "Ensure containers are not running as root by default; define Pod Security Standards that prevent privileged containers." },
+        { "id": "M1018", "name": "User Account Management", "detail": "Restrict which identities can create orchestration jobs via RBAC, limited to authorized administrators and automation accounts." }
+      ],
+      "related": [
+        { "id": "T1059.013", "name": "Container CLI/API", "relation": "The same Kubernetes API surface, used here for scheduled persistence rather than interactive exec-based execution." }
+      ],
+      "hypothesis": {
+        "statement": "A Kubernetes CronJob object is created by an identity outside the cluster's documented CI/CD or platform-automation service accounts, particularly one whose pod spec requests a privileged container or a hostPath mount.",
+        "rationale": "Weight the privileged-container/hostPath detail heavily when triaging -- a CronJob without either is a persistence concern, but one with them is a far more urgent host-escape concern that should jump the queue."
+      }
+    }
+  ]
+}

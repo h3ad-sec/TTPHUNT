@@ -1,6 +1,6 @@
 {
   "generated": "2026-09-15",
-  "count": 6,
+  "count": 7,
   "techniques": [
     {
       "id": "T1003",
@@ -110,6 +110,21 @@
         { "id": "T1055.013", "name": "Process Doppelgänging" },
         { "id": "T1055.014", "name": "VDSO Hijacking" },
         { "id": "T1055.015", "name": "ListPlanting" }
+      ]
+    },
+    {
+      "id": "T1053",
+      "name": "Scheduled Task/Job",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Containers", "Network Devices"],
+      "file": "techniques/T1053.json",
+      "subtechniques": [
+        { "id": "T1053.002", "name": "At" },
+        { "id": "T1053.003", "name": "Cron" },
+        { "id": "T1053.005", "name": "Scheduled Task" },
+        { "id": "T1053.006", "name": "Systemd Timers" },
+        { "id": "T1053.007", "name": "Container Orchestration Job" }
       ]
     }
   ]
