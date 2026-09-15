@@ -62,7 +62,7 @@
       "id": "T1078",
       "name": "Valid Accounts",
       "tactic": "TA0005",
-      "tactic_name": "Defense Evasion",
+      "tactic_name": "Stealth",
       "platforms": ["Windows", "Linux", "macOS", "ESXi", "Containers", "IaaS", "SaaS", "Identity Provider", "Office Suite", "Network Devices"],
       "file": "techniques/T1078.json",
       "subtechniques": [
@@ -94,7 +94,7 @@
       "id": "T1055",
       "name": "Process Injection",
       "tactic": "TA0005",
-      "tactic_name": "Defense Evasion",
+      "tactic_name": "Stealth",
       "platforms": ["Windows", "Linux", "macOS"],
       "file": "techniques/T1055.json",
       "subtechniques": [

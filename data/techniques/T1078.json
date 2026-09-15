@@ -2,7 +2,7 @@
   "id": "T1078",
   "name": "Valid Accounts",
   "tactic": "TA0005",
-  "tactic_name": "Defense Evasion",
+  "tactic_name": "Stealth",
   "platforms": [
     "Windows",
     "Linux",
@@ -16,7 +16,7 @@
     "Network Devices"
   ],
   "mitre_url": "https://attack.mitre.org/techniques/T1078/",
-  "overview": "Adversaries obtain and reuse legitimate credentials to gain access, and the technique spans four MITRE tactics at once — Initial Access, Persistence, Privilege Escalation, and Defense Evasion — because a valid login doesn't just get an attacker in, it also lets them stay, escalate, and blend into normal activity all with the same mechanism. This is the technique family everything T1003 and T1558 feed into: those packs are about obtaining credentials, this one is about what happens once an attacker actually uses them. The four sub-techniques below split by account tier — default, domain, local, and cloud — because each has a different blast radius and a different detection surface when compromised.",
+  "overview": "Adversaries obtain and reuse legitimate credentials to gain access, and the technique spans four MITRE tactics at once — Initial Access, Persistence, Privilege Escalation, and Stealth — because a valid login doesn't just get an attacker in, it also lets them stay, escalate, and blend into normal activity all with the same mechanism. This is the technique family everything T1003 and T1558 feed into: those packs are about obtaining credentials, this one is about what happens once an attacker actually uses them. The four sub-techniques below split by account tier — default, domain, local, and cloud — because each has a different blast radius and a different detection surface when compromised.",
   "prerequisite_concepts": [
     {
       "term": "Why this is the highest-success-rate technique in the framework",
@@ -40,7 +40,7 @@
       "id": "T1078.001",
       "name": "Default Accounts",
       "tactic": "TA0005",
-      "tactic_name": "Defense Evasion",
+      "tactic_name": "Stealth",
       "platforms": [
         "Windows",
         "Linux",
@@ -161,7 +161,7 @@
       "id": "T1078.002",
       "name": "Domain Accounts",
       "tactic": "TA0005",
-      "tactic_name": "Defense Evasion",
+      "tactic_name": "Stealth",
       "platforms": [
         "Windows",
         "Linux",
@@ -283,7 +283,7 @@
       "id": "T1078.003",
       "name": "Local Accounts",
       "tactic": "TA0005",
-      "tactic_name": "Defense Evasion",
+      "tactic_name": "Stealth",
       "platforms": [
         "Windows",
         "Linux",
@@ -401,7 +401,7 @@
       "id": "T1078.004",
       "name": "Cloud Accounts",
       "tactic": "TA0005",
-      "tactic_name": "Defense Evasion",
+      "tactic_name": "Stealth",
       "platforms": [
         "IaaS",
         "Identity Provider",

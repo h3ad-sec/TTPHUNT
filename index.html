@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TTPHUNT: ATT&amp;CK Hunting Guides</title>
-  <meta name="description" content="In-depth, practical MITRE ATT&amp;CK hunting guides: prerequisite concepts, real procedure examples, data sources, detection queries, false-positive guidance, and response steps per technique. Covers Initial Access, Execution, Persistence, Defense Evasion, Credential Access, Lateral Movement, and Command and Control." />
+  <meta name="description" content="In-depth, practical MITRE ATT&amp;CK hunting guides: prerequisite concepts, real procedure examples, data sources, detection queries, false-positive guidance, and response steps per technique. Covers Initial Access, Execution, Persistence, Privilege Escalation, Stealth, Credential Access, Discovery, Lateral Movement, Collection, Command and Control, Exfiltration, and Impact." />
   <link rel="canonical" href="https://h3ad-sec.github.io/TTPHUNT/" />
 
   <meta property="og:type" content="website" />
@@ -208,19 +208,26 @@ body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
   cursor:pointer;transition:.15s;white-space:nowrap;}
 .tt-nav-export-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--surface);}
 
-.tt-coverage-strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;}
-.tt-coverage-chip{--pack-rgb:110,120,140;position:relative;overflow:hidden;border-radius:8px;padding:10px 12px 9px;
-  border:1px solid var(--border);background:var(--panel-alt);transition:transform .15s var(--ease),border-color .15s,background .15s;}
-.tt-coverage-chip::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:rgb(var(--pack-rgb));opacity:.6;}
-.tt-coverage-chip.covered{cursor:pointer;}
-.tt-coverage-chip.covered:hover{border-color:rgb(var(--pack-rgb));background:var(--surface);transform:translateY(-1px);}
-.tt-coverage-chip.uncovered{opacity:.55;}
-.tt-coverage-chip.uncovered::before{opacity:.25;}
-.tt-coverage-ta{font-family:var(--mono);font-size:9px;letter-spacing:1px;color:var(--muted-dim);margin-bottom:3px;}
-.tt-coverage-name{font-size:11.5px;font-weight:600;color:var(--text);line-height:1.3;margin-bottom:5px;min-height:28px;}
-.tt-coverage-chip.covered .tt-coverage-name{color:rgb(var(--pack-rgb));}
-.tt-coverage-count{font-family:var(--mono);font-size:9.5px;color:var(--dim);}
-.tt-coverage-chip.uncovered .tt-coverage-count{font-style:italic;}
+.tt-matrix-wrap{overflow-x:auto;padding-bottom:6px;margin:0 -4px;}
+.tt-matrix{display:flex;gap:6px;align-items:flex-start;padding:0 4px;width:max-content;min-width:100%;}
+.tt-matrix-col{--pack-rgb:110,120,140;flex:0 0 148px;width:148px;}
+.tt-matrix-head{position:relative;overflow:hidden;border-radius:7px 7px 0 0;padding:8px 10px 7px;
+  border:1px solid var(--border);border-bottom:none;background:var(--panel-alt);}
+.tt-matrix-head::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:rgb(var(--pack-rgb));opacity:.7;}
+.tt-matrix-col.covered .tt-matrix-head{cursor:pointer;}
+.tt-matrix-col.covered .tt-matrix-head:hover{background:var(--surface);}
+.tt-matrix-ta{font-family:var(--mono);font-size:8.5px;letter-spacing:1px;color:var(--muted-dim);margin-bottom:2px;}
+.tt-matrix-tactic-name{font-size:10.5px;font-weight:700;line-height:1.25;color:var(--text);}
+.tt-matrix-col.covered .tt-matrix-tactic-name{color:rgb(var(--pack-rgb));}
+.tt-matrix-col.uncovered .tt-matrix-head{opacity:.5;}
+.tt-matrix-body{border:1px solid var(--border);border-radius:0 0 7px 7px;background:var(--panel);
+  display:flex;flex-direction:column;min-height:56px;overflow:hidden;}
+.tt-matrix-cell{padding:8px 9px;font-size:10.5px;line-height:1.35;color:var(--text-dim);cursor:pointer;
+  border-bottom:1px solid var(--border);transition:background .12s,color .12s;}
+.tt-matrix-cell:last-child{border-bottom:none;}
+.tt-matrix-cell:hover{background:rgba(var(--pack-rgb),.1);color:var(--text);}
+.tt-matrix-cell-id{font-family:var(--mono);font-size:9px;font-weight:700;color:rgb(var(--pack-rgb));display:block;margin-bottom:2px;}
+.tt-matrix-empty{padding:10px 9px;font-size:10px;font-style:italic;color:var(--muted-dim);text-align:center;}
 
 .tt-pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
 .tt-pack-card{--pack-rgb:0,212,255;position:relative;overflow:hidden;border:1px solid var(--border);border-radius:9px;
@@ -644,8 +651,9 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){retu
 var TACTIC_RGB={
   'Credential Access':'0,212,255',
   'Execution':'245,158,11',
-  'Defense Evasion':'167,139,250',
-  'Privilege Escalation':'167,139,250',
+  'Stealth':'167,139,250',
+  'Defense Impairment':'190,24,93',
+  'Privilege Escalation':'129,140,248',
   'Lateral Movement':'20,184,166',
   'Persistence':'236,72,153',
   'Initial Access':'99,102,241',
@@ -666,7 +674,8 @@ var TACTIC_SHORTNAME={
   'Execution':'execution',
   'Persistence':'persistence',
   'Privilege Escalation':'privilege-escalation',
-  'Defense Evasion':'defense-evasion',
+  'Stealth':'stealth',
+  'Defense Impairment':'defense-impairment',
   'Credential Access':'credential-access',
   'Discovery':'discovery',
   'Lateral Movement':'lateral-movement',
@@ -679,28 +688,43 @@ function tacticShortname(name){ return TACTIC_SHORTNAME[name] || name.toLowerCas
 
 /* Canonical Enterprise ATT&CK tactic order, used to render the home-page
    coverage strip regardless of which tactics TTPHUNT currently has packs in. */
+/* Enterprise ATT&CK v19+ tactic list -- TA0005 was renamed from "Defense
+   Evasion" to "Stealth" and split off a new "Defense Impairment" (TA0112)
+   tactic on 2026-04-28. Verify against https://attack.mitre.org/tactics/enterprise/
+   before assuming this list is still current if MITRE ships another split. */
 var ATTACK_TACTIC_ORDER=[
   ['TA0043','Reconnaissance'],['TA0042','Resource Development'],['TA0001','Initial Access'],
   ['TA0002','Execution'],['TA0003','Persistence'],['TA0004','Privilege Escalation'],
-  ['TA0005','Defense Evasion'],['TA0006','Credential Access'],['TA0007','Discovery'],
-  ['TA0008','Lateral Movement'],['TA0009','Collection'],['TA0011','Command and Control'],
-  ['TA0010','Exfiltration'],['TA0040','Impact']
+  ['TA0005','Stealth'],['TA0112','Defense Impairment'],['TA0006','Credential Access'],
+  ['TA0007','Discovery'],['TA0008','Lateral Movement'],['TA0009','Collection'],
+  ['TA0011','Command and Control'],['TA0010','Exfiltration'],['TA0040','Impact']
 ];
 function renderCoverageStrip(){
-  var countByTactic={};
-  manifest.techniques.forEach(function(t){ countByTactic[t.tactic_name]=(countByTactic[t.tactic_name]||0)+1; });
-  var html='<div class="tt-coverage-strip">';
+  var techsByTactic={};
+  manifest.techniques.forEach(function(t){
+    (techsByTactic[t.tactic_name]=techsByTactic[t.tactic_name]||[]).push(t);
+  });
+  var html='<div class="tt-matrix-wrap"><div class="tt-matrix">';
   ATTACK_TACTIC_ORDER.forEach(function(pair){
     var ta=pair[0], name=pair[1];
-    var count=countByTactic[name]||0;
-    var covered=count>0;
+    var list=techsByTactic[name]||[];
+    var covered=list.length>0;
     var rgb=covered?tacticRgb(name):'110,120,140';
-    html+='<div class="tt-coverage-chip'+(covered?' covered':' uncovered')+'" style="--pack-rgb:'+rgb+'"';
-    html+=covered?' onclick="jumpToTactic(\''+esc(name).replace(/'/g,"\\'")+'\')" title="Jump to '+esc(name)+' in the sidebar"':' title="No packs yet"';
-    html+='><div class="tt-coverage-ta">'+esc(ta)+'</div><div class="tt-coverage-name">'+esc(name)+'</div>';
-    html+='<div class="tt-coverage-count">'+(covered?(count+' pack'+(count===1?'':'s')):'not yet covered')+'</div></div>';
+    html+='<div class="tt-matrix-col'+(covered?' covered':' uncovered')+'" style="--pack-rgb:'+rgb+'">';
+    html+='<div class="tt-matrix-head"'+(covered?' onclick="jumpToTactic(\''+esc(name).replace(/'/g,"\\'")+'\')" title="Jump to '+esc(name)+' in the sidebar"':' title="No packs yet"')+'>';
+    html+='<div class="tt-matrix-ta">'+esc(ta)+'</div><div class="tt-matrix-tactic-name">'+esc(name)+'</div></div>';
+    html+='<div class="tt-matrix-body">';
+    if(covered){
+      list.forEach(function(t){
+        html+='<div class="tt-matrix-cell" onclick="selectTechnique(\''+esc(t.id)+'\')" title="'+esc(t.id)+' '+esc(t.name)+'">';
+        html+='<span class="tt-matrix-cell-id">'+esc(t.id)+'</span>'+esc(t.name)+'</div>';
+      });
+    } else {
+      html+='<div class="tt-matrix-empty">not yet<br>covered</div>';
+    }
+    html+='</div></div>';
   });
-  return html+'</div>';
+  return html+'</div></div>';
 }
 function jumpToTactic(tacticName){
   collapsedTactics[tacticName]=false;
@@ -736,7 +760,7 @@ function exportNavigatorLayer(){
   });
   var layer={
     name:'TTPHUNT Coverage',
-    versions:{attack:'17',navigator:'5.1.0',layer:'4.5'},
+    versions:{attack:'19',navigator:'5.3.2',layer:'4.5'},
     domain:'enterprise-attack',
     description:'Techniques and sub-techniques covered by TTPHUNT (h3ad-sec.github.io/TTPHUNT/) -- generated '+new Date().toISOString().slice(0,10)+'.',
     filters:{platforms:['Windows','Linux','macOS','Network','Containers','Cloud','ESXi']},
@@ -1062,7 +1086,7 @@ function renderHome(){
   html+='<button class="tt-nav-export-btn" onclick="exportNavigatorLayer()">⬇ Export ATT&amp;CK Navigator Layer</button>';
   html+='</div></div>';
 
-  html+='<div class="tt-section"><div class="tt-section-title">Tactic Coverage</div>';
+  html+='<div class="tt-section"><div class="tt-section-title">ATT&amp;CK Matrix Coverage</div>';
   html+=renderCoverageStrip();
   html+='</div>';
 
