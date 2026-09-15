@@ -201,8 +201,12 @@ body.light .footer-credit-pill .credit-name{color:#0A6EA8;}
 .tt-home-hero{padding-bottom:8px;}
 .tt-home-title{font-size:28px;font-weight:700;color:var(--text);margin-bottom:10px;line-height:1.25;}
 .tt-home-sub{font-size:13.5px;color:var(--text-dim);line-height:1.75;max-width:680px;}
-.tt-home-stats{display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--dim);}
+.tt-home-stats{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--dim);}
 .tt-home-stats b{color:var(--accent);font-size:15px;}
+.tt-nav-export-btn{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text-dim);
+  background:var(--panel-alt);border:1px solid var(--border);border-radius:6px;padding:7px 14px;
+  cursor:pointer;transition:.15s;white-space:nowrap;}
+.tt-nav-export-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--surface);}
 
 .tt-pack-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
 .tt-pack-card{--pack-rgb:0,212,255;position:relative;overflow:hidden;border:1px solid var(--border);border-radius:9px;
@@ -639,6 +643,77 @@ var TACTIC_RGB={
 };
 function tacticRgb(name){ return TACTIC_RGB[name] || '0,212,255'; }
 
+/* ATT&CK Navigator layer export -- tactic display name -> STIX shortname
+   (the Navigator convention is simply lowercase + hyphenated). */
+var TACTIC_SHORTNAME={
+  'Reconnaissance':'reconnaissance',
+  'Resource Development':'resource-development',
+  'Initial Access':'initial-access',
+  'Execution':'execution',
+  'Persistence':'persistence',
+  'Privilege Escalation':'privilege-escalation',
+  'Defense Evasion':'defense-evasion',
+  'Credential Access':'credential-access',
+  'Discovery':'discovery',
+  'Lateral Movement':'lateral-movement',
+  'Collection':'collection',
+  'Command and Control':'command-and-control',
+  'Exfiltration':'exfiltration',
+  'Impact':'impact'
+};
+function tacticShortname(name){ return TACTIC_SHORTNAME[name] || name.toLowerCase().replace(/\s+/g,'-'); }
+function rgbStringToHex(rgbStr){
+  var parts=rgbStr.split(',').map(function(n){ return parseInt(n.trim(),10); });
+  return '#'+parts.map(function(n){ return n.toString(16).padStart(2,'0'); }).join('');
+}
+
+function exportNavigatorLayer(){
+  var techniques=[];
+  manifest.techniques.forEach(function(t){
+    var hex=rgbStringToHex(tacticRgb(t.tactic_name));
+    var shortname=tacticShortname(t.tactic_name);
+    techniques.push({
+      techniqueID:t.id, tactic:shortname, color:hex, comment:t.name,
+      enabled:true, showSubtechniques:true, metadata:[], links:[]
+    });
+    t.subtechniques.forEach(function(s){
+      techniques.push({
+        techniqueID:s.id, tactic:shortname, color:hex, comment:s.name,
+        enabled:true, showSubtechniques:false, metadata:[], links:[]
+      });
+    });
+  });
+  var layer={
+    name:'TTPHUNT Coverage',
+    versions:{attack:'17',navigator:'5.1.0',layer:'4.5'},
+    domain:'enterprise-attack',
+    description:'Techniques and sub-techniques covered by TTPHUNT (h3ad-sec.github.io/TTPHUNT/) -- generated '+new Date().toISOString().slice(0,10)+'.',
+    filters:{platforms:['Windows','Linux','macOS','Network','Containers','Cloud','ESXi']},
+    sorting:0,
+    layout:{layout:'side',showID:true,showName:true,showAggregateScores:false,countUnscored:false},
+    hideDisabled:false,
+    techniques:techniques,
+    gradient:{colors:['#ffffff','#00d4ff'],minValue:0,maxValue:100},
+    legendItems:[],
+    metadata:[],
+    links:[],
+    showTacticRowBackground:false,
+    tacticRowBackground:'#dddddd',
+    selectTechniquesAcrossTactics:true,
+    selectSubtechniquesWithParent:false
+  };
+  var json=JSON.stringify(layer,null,2);
+  var blob=new Blob([json],{type:'application/json;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download='ttphunt-navigator-layer.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+}
+
 /* ── Working-mode checklist (localStorage, per sub-technique) ── */
 var CHECKLIST_KEY='ttphunt_checklist_v1';
 function loadChecklists(){
@@ -919,6 +994,7 @@ function renderHome(){
   html+='<span><b>'+manifest.techniques.length+'</b> technique'+(manifest.techniques.length===1?'':'s')+'</span>';
   html+='<span><b>'+subCount+'</b> sub-techniques</span>';
   html+='<span><b>'+tacticCount+'</b> tactic'+(tacticCount===1?'':'s')+'</span>';
+  html+='<button class="tt-nav-export-btn" onclick="exportNavigatorLayer()">⬇ Export ATT&amp;CK Navigator Layer</button>';
   html+='</div></div>';
 
   html+='<div class="tt-section"><div class="tt-section-title">Technique Packs</div><div class="tt-pack-grid">';
