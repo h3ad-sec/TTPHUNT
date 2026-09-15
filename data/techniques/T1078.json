@@ -149,8 +149,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using a default account, Guest, Administrator, DefaultAccount, or root will show an interactive or remote logon outside any documented maintenance window.",
-        "rationale": "Because these accounts should rarely if ever be used directly in a well-managed environment, almost any hit here is worth investigating rather than tuning away."
+        "statement": "Guest, the built-in Administrator, DefaultAccount, or a device's factory root account authenticates interactively or remotely outside a documented provisioning or maintenance window.",
+        "rationale": "Because none of these accounts should be in routine use once an environment is properly configured, this hunt is best run as an ongoing detection rather than a one-time sweep -- recurring hits point to a provisioning gap worth fixing at the source."
       }
     },
     {
@@ -271,8 +271,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is moving laterally with a compromised domain account, that account will authenticate to an unusually high number of distinct hosts within a short window.",
-        "rationale": "The distinct-host-count threshold needs to be tuned against your own environment's baseline for service accounts and admin tooling before this hypothesis is reliable at scale."
+        "statement": "A single domain account successfully authenticates to more than five distinct hosts within a thirty-minute window, outside the behavior of known IT deployment tooling or monitoring agents.",
+        "rationale": "Baseline this threshold against your own environment before trusting it at face value -- patch-management and EDR service accounts routinely produce exactly this fan-out pattern, so the exclusion list matters more than the threshold itself."
       }
     },
     {
@@ -389,8 +389,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If local admin password reuse is being exploited, the same local account name will successfully authenticate across many distinct hosts in a short window, outside known remote-support tooling.",
-        "rationale": "This is functionally the same shape as the domain-account hypothesis above, which is itself informative -- if you see it on local accounts too, LAPS likely isn't fully deployed yet."
+        "statement": "The same local account name authenticates successfully across more than five distinct hosts within a short window, and LAPS or an equivalent local-admin-rotation control is not confirmed deployed on those hosts.",
+        "rationale": "If this hunt returns a real hit, the finding usually isn't 'this one host is compromised' -- it's 'local admin password reuse exists across this entire fleet,' which changes the remediation scope from one machine to every machine sharing that password."
       }
     },
     {
@@ -520,8 +520,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If a cloud account has been compromised, sign-in logs will show two successful authentications for the same identity from geographically implausible locations within an implausibly short window.",
-        "rationale": "Impossible travel is one of the most reliable off-the-shelf cloud detections available, but confirm your VPN/proxy exit-node ranges are excluded first to avoid chasing false positives."
+        "statement": "The same identity successfully authenticates from two locations whose distance makes the observed travel time physically implausible.",
+        "rationale": "Exclude known corporate VPN egress and CDN/proxy ranges before treating a hit as a compromise -- those are, in practice, the majority of false positives against this specific hypothesis in most tenants."
       }
     }
   ]

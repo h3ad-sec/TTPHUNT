@@ -161,8 +161,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary has forged a Golden Ticket, a Security 4769 (TGS request) will appear with no matching 4768 (TGT request) for that logon session, or with a ticket lifetime far exceeding the domain's configured maximum.",
-        "rationale": "Both signals are structural properties of forgery tooling, not behavioral guesses, so they hold up even against attackers who are otherwise careful about blending in."
+        "statement": "A 4769 service-ticket request appears for a logon session with no corresponding 4768 in the preceding window, or a TGT's validity period materially exceeds the domain's configured Maximum Lifetime for User Ticket.",
+        "rationale": "Forged tickets built with Mimikatz's kerberos::golden module default to conspicuously long lifetimes unless an operator deliberately matches the domain's real policy, which makes the lifetime check a cheap, high-yield secondary filter on top of the TGT/TGS pairing gap."
       }
     },
     {
@@ -274,8 +274,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary has forged a Silver Ticket against a specific service, that service will show a Kerberos-authenticated logon with no corresponding 4769 on any domain controller in the same window.",
-        "rationale": "This is an absence-based hypothesis, which is harder to automate than a positive match, so it's best tested by hand against a specific service you already suspect rather than run continuously."
+        "statement": "A service accepts a Kerberos-authenticated logon with no matching 4769 issued by any domain controller in the surrounding window.",
+        "rationale": "This hypothesis can't be automated as cleanly as the others in this pack -- it depends on the target service's own authentication logs, which many organizations don't centralize -- so start by testing it by hand against your highest-value service accounts rather than running it as a blanket sweep."
       }
     },
     {
@@ -404,8 +404,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is Kerberoasting, one account will request RC4-encrypted (0x17) service tickets for an unusually high number of distinct SPNs within a short window.",
-        "rationale": "Legitimate applications rarely request tickets for more than one or two services in quick succession, so the distinct-SPN-count threshold is a strong initial filter."
+        "statement": "One account requests RC4-encrypted (etype 0x17) service tickets for more than three distinct SPNs inside a ten-minute window.",
+        "rationale": "The distinct-SPN threshold does the real work here -- a single RC4 ticket request is unremarkable in a mixed-encryption domain, but a burst across multiple services from one identity has very few legitimate explanations outside a security assessment."
       }
     },
     {
@@ -513,8 +513,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is AS-REP Roasting, a 4768 (AS-REQ) will show Pre-Authentication Type 0 for an account, meaning pre-auth was not required.",
-        "rationale": "This hypothesis doesn't even require the attacker to have valid credentials to test -- it's purely about which accounts are configured without pre-auth, which you can and should audit proactively rather than wait to observe in logs."
+        "statement": "A 4768 shows Pre-Authentication Type 0 for an account, meaning the domain controller issued an AS-REP without requiring proof of password knowledge.",
+        "rationale": "Don't wait to observe this in logs -- it's cheaper and more complete to proactively query for every account with the DONT_REQUIRE_PREAUTH flag set and treat the resulting list as your actual attack surface, since an attacker doesn't need a single valid credential to test it."
       }
     },
     {
@@ -612,8 +612,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is stealing Kerberos tickets from a Linux/macOS session, a process other than the owning user will read a krb5cc_* file in /tmp or a KRB5CCNAME-referenced path.",
-        "rationale": "Ownership mismatch is the cleanest signal here since legitimate ccache access is almost always by the session's own user or root-level system services like SSSD."
+        "statement": "A krb5cc_* file under /tmp, or a path referenced by KRB5CCNAME, is read by a process running under a different UID than the file's owner.",
+        "rationale": "Ownership mismatch is the whole signal on a well-configured host; if this hunt returns nothing but SSSD or root-owned system services, the environment is likely clean rather than the hunt being poorly scoped."
       }
     }
   ]

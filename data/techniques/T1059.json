@@ -164,8 +164,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is executing PowerShell payloads, powershell.exe/pwsh.exe will run with -EncodedCommand, -WindowStyle Hidden, or -NoProfile, and the corresponding 4104 script block will contain obfuscated or download-cradle-style code.",
-        "rationale": "The launch flags alone produce false positives from legitimate deployment tooling, so the hypothesis is only confirmed once the actual 4104 script content is reviewed, not from the command line alone."
+        "statement": "powershell.exe or pwsh.exe launches with -EncodedCommand, -WindowStyle Hidden, or -NoProfile, and the corresponding 4104 script block resolves to a download cradle, reflective load, or otherwise obfuscated payload rather than a routine administrative script.",
+        "rationale": "Treat the launch flags as a triage filter, not a verdict -- deployment tools like SCCM and DSC pass encoded arguments constantly for whitespace safety, so this hypothesis is only confirmed once an analyst has actually read the decoded 4104 content."
       }
     },
     {
@@ -266,8 +266,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using AppleScript for execution, osascript will run with a 'do shell script' argument, or NSAppleScript/OSAScript API calls will originate from a Mach-O binary with no corresponding osascript process.",
-        "rationale": "Covering both the CLI and native-API paths matters because a detection built only around the osascript process would miss the API-based variant entirely."
+        "statement": "osascript executes with a 'do shell script' argument targeting Keychain, or NSAppleScript/OSAScript API calls originate from a Mach-O binary with no corresponding osascript process in the tree.",
+        "rationale": "Weight the API-call variant more heavily than the CLI variant -- it's the one built specifically to route around detections that only watch for the osascript process, so a hunt limited to process telemetry alone will systematically miss it."
       }
     },
     {
@@ -370,8 +370,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using cmd.exe as an execution wrapper, it will be spawned from an Office application, script host, or other non-interactive parent rather than from explorer.exe or a console session.",
-        "rationale": "Parent-process lineage is the most reliable filter here since cmd.exe itself is used constantly for entirely legitimate reasons."
+        "statement": "cmd.exe spawns as a direct child of winword.exe, excel.exe, powerpnt.exe, or a script host, rather than from explorer.exe or an interactive console session.",
+        "rationale": "cmd.exe itself is far too common to hunt on directly; the entire value of this hypothesis is in the parent-process lineage, so scope any query to that lineage from the start rather than filtering it in afterward."
       }
     },
     {
@@ -477,8 +477,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary has obtained shell access via a web-facing process, a shell (sh/bash) will spawn as a direct child of nginx, apache, httpd, or php-fpm.",
-        "rationale": "This specific parent-child pairing has almost no legitimate explanation on a properly configured web server, making it a high-confidence starting hypothesis rather than a broad shell-usage sweep."
+        "statement": "sh or bash spawns as a direct child of nginx, apache2, httpd, or php-fpm.",
+        "rationale": "On a correctly configured web tier this parent-child pairing should return zero results; any hit is close to a confirmed web-shell-to-RCE chain rather than a lead requiring further scoring."
       }
     },
     {
@@ -593,8 +593,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using a VBA/VBScript payload, wscript.exe, cscript.exe, or mshta.exe will spawn directly from an Office application process.",
-        "rationale": "This macro-to-script-host handoff is the most common real-world pattern documented for this technique and is rare in legitimate day-to-day Office use."
+        "statement": "wscript.exe, cscript.exe, or mshta.exe spawns directly from winword.exe, excel.exe, or outlook.exe.",
+        "rationale": "This macro-to-script-host handoff is specific enough to run as a near-standing detection in most enterprise environments, since legitimate Office deployments that intentionally shell out to external scripts are the exception, not the rule."
       }
     },
     {
@@ -705,8 +705,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using Python for execution, python.exe/python3 will run with an unusual parent (Office, a script host, a web-facing process) or from a non-standard install path, or a compiled PyInstaller-style binary will exhibit Python-runtime behavior despite no system Python install.",
-        "rationale": "Covering the compiled-binary variant matters specifically because 'no Python installed' is not a safe assumption to hunt under."
+        "statement": "python.exe or python3 executes with a parent process of winword.exe, mshta.exe, or a web-facing service account, or a compiled PyInstaller-style binary exhibits an embedded Python runtime despite no system Python installation being present on the host.",
+        "rationale": "Scope the second half of this hypothesis explicitly -- 'no Python installed' is a common but incorrect assumption to hunt under, since a bundled interpreter carries its own runtime and won't show up in a software inventory check."
       }
     },
     {
@@ -815,8 +815,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is delivering a JavaScript payload outside the browser, wscript.exe or cscript.exe will execute a standalone .js file, or mshta.exe will run with an HTA argument.",
-        "rationale": "WSH-based execution sits outside the browser sandbox entirely, so this hypothesis is scoped specifically to that higher-risk delivery path rather than ordinary web-page JavaScript."
+        "statement": "wscript.exe or cscript.exe executes a standalone .js file, or mshta.exe runs with an .hta argument, outside of a documented legacy logon-script deployment.",
+        "rationale": "This hypothesis is deliberately scoped to the Windows Script Host delivery path rather than in-browser JavaScript, since WSH execution sits entirely outside the browser sandbox and carries a materially higher risk profile."
       }
     },
     {
@@ -914,8 +914,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary has compromised a network device's CLI, AAA/TACACS+ logs will show a high-risk command (config replace, no logging, terminal monitor) issued by a session outside a documented maintenance window.",
-        "rationale": "Because most network devices have no EDR agent, AAA/syslog is the only realistic data source for this hypothesis -- confirm it's actually being forwarded off-device before relying on it."
+        "statement": "AAA/TACACS+ logs show a config replace, no logging, or terminal monitor command issued against a network device outside a scheduled maintenance window.",
+        "rationale": "Confirm command-level AAA logging is actually configured and being forwarded before relying on this hypothesis -- a surprising number of environments have TACACS+ deployed for authentication but never enabled command accounting, which silently defeats this entire hunt."
       }
     },
     {
@@ -1025,8 +1025,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using stolen cloud credentials for execution, cloud audit logs will show CLI-based authentication (Connect-AzAccount, gcloud auth login) from a source or pattern inconsistent with that identity's history, followed by API calls outside its normal scope.",
-        "rationale": "CLI-based auth is the detail worth anchoring on, since it's less commonly baselined than interactive console sign-ins."
+        "statement": "An identity authenticates via Azure PowerShell, Azure CLI, or Microsoft Graph PowerShell from a location or client fingerprint it has never used before, followed by API calls outside that identity's established scope of activity.",
+        "rationale": "Anchor on the CLI/PowerShell client application specifically -- it's less commonly baselined by security teams than interactive browser sign-ins, which makes it a comparatively under-hunted corner of most cloud environments."
       }
     },
     {
@@ -1118,8 +1118,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using AutoIT/AutoHotkey, AutoIt3.exe or AutoHotkey.exe will execute a script, or a compiled binary will exhibit AutoIt/AHK runtime characteristics with no visible interpreter process at all.",
-        "rationale": "The compiled-binary case is the one worth emphasizing, since it's specifically designed to evade the more obvious interpreter-execution signal."
+        "statement": "AutoIt3.exe or AutoHotkey.exe executes a script from a user-writable directory, or a binary exhibits AutoIt/AHK compiled-runtime characteristics with no corresponding interpreter process anywhere in its lineage.",
+        "rationale": "Weight the compiled-binary case appropriately -- it exists specifically to defeat interpreter-execution monitoring, so a hunt built only around AutoIt3.exe/AutoHotkey.exe process creation will miss a meaningful share of real-world samples."
       }
     },
     {
@@ -1224,8 +1224,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using Lua for execution, a standalone lua.exe/luajit process will run outside a known Lua-using application, or a network device will execute an unexpected Lua script via its embedded interpreter.",
-        "rationale": "Because Lua's primary legitimate use is embedded inside other applications, a standalone interpreter process is itself somewhat unusual and worth the initial look."
+        "statement": "A standalone lua.exe or luajit process executes outside a known Lua-embedding application's install directory, or a network device runs an unexpected script through its built-in Lua extension.",
+        "rationale": "Because Lua's dominant legitimate use case is embedded inside a host application rather than run standalone, a bare interpreter process is itself a reasonable starting anomaly on most enterprise endpoints."
       }
     },
     {
@@ -1317,8 +1317,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is abusing ESXi's hypervisor CLI, shell.log will show esxcli vm process kill or firewall/logging-configuration commands from a session outside a scheduled maintenance window.",
-        "rationale": "Bulk VM termination via esxcli specifically is close to a hard confirm-and-respond signal rather than a lead needing further triage, given how strongly it correlates with ransomware pre-encryption behavior."
+        "statement": "shell.log on an ESXi host shows esxcli vm process kill executed against more than a handful of VMs in a single session, or firewall/logging configuration changes precede such a session.",
+        "rationale": "Treat a confirmed hit as an active incident, not a hunting lead -- this exact pattern is the immediate precursor to datastore-level ransomware encryption, and the time between first kill command and full outage is typically measured in minutes."
       }
     },
     {
@@ -1407,8 +1407,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is executing commands inside a running container, the Kubernetes audit log will show a 'create' verb against the pods/exec subresource from an identity outside the expected CI/CD service account list.",
-        "rationale": "The audit log only proves the exec call happened, not what ran inside -- pair this hypothesis with runtime telemetry (Falco or similar) if you need to see the actual commands."
+        "statement": "Kubernetes audit logs show a 'create' verb against the pods/exec subresource from an identity outside the cluster's known CI/CD service-account list, targeting a production namespace.",
+        "rationale": "Remember the audit log's limit -- it proves the exec call happened, not what ran afterward; pair any hit from this hypothesis with Falco or equivalent runtime telemetry before closing out the investigation."
       }
     }
   ]

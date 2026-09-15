@@ -149,8 +149,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is moving laterally via RDP, a Security 4624 LogonType 10 (RemoteInteractive) event will appear for an account or at a time inconsistent with that account's established pattern.",
-        "rationale": "LogonType 10 is specific enough to RDP that the hypothesis can be tested directly without needing additional correlation, though it should be scoped against a source-IP allowlist for known jump hosts."
+        "statement": "A LogonType 10 (RemoteInteractive) session appears for an account, or from a source, that falls outside its established 30-day baseline.",
+        "rationale": "Scope this hunt with an explicit allowlist of jump hosts and bastion servers from the outset -- without it, legitimate admin RDP traffic will dominate the result set and bury the hits worth investigating."
       }
     },
     {
@@ -268,8 +268,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is moving laterally via admin shares, an executable will be written to ADMIN$ or C$ over SMB, followed within minutes by a new service or scheduled task referencing that same file.",
-        "rationale": "Testing for the pairing (file write plus execution trigger) rather than the SMB write alone is what separates this from routine deployment-tooling activity."
+        "statement": "An executable is written to ADMIN$ or C$ over SMB, and a new service or scheduled task referencing that same file is created on the target within five minutes.",
+        "rationale": "Hunt for the pairing, not the SMB write alone -- file copies to admin shares are routine in any environment running centralized software deployment, and the execution trigger that follows is what actually separates malicious use from routine patching."
       }
     },
     {
@@ -368,8 +368,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using DCOM for lateral movement, inbound RPC traffic on TCP 135 will be followed by an Office application process spawning without its normal explorer.exe-launched parent lineage.",
-        "rationale": "The network-level RPC signature plus the abnormal process lineage together are more specific than either alone."
+        "statement": "Inbound RPC traffic to TCP 135 precedes an Office application process spawning without explorer.exe anywhere in its parent chain.",
+        "rationale": "Neither signal alone is reliable -- RPC to 135 is common on any domain-joined network, and Office processes launch through many legitimate mechanisms -- but the combination, in that order, is specific enough to investigate directly."
       }
     },
     {
@@ -484,8 +484,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is moving laterally via SSH, a session will authenticate from a source outside the known admin/jump-host allowlist, or password-based root authentication will succeed where key-based auth is expected.",
-        "rationale": "SSH usage itself is too routine to hunt on directly -- the hypothesis has to be anchored on source, account, or auth-method anomalies specifically."
+        "statement": "An SSH session authenticates from a source IP outside the organization's documented jump-host/bastion ranges, or root authenticates via password where the host's baseline shows key-only access.",
+        "rationale": "SSH volume alone is not huntable in any Linux-heavy environment -- this hypothesis only works when anchored to source, account, or auth-method deviation from an established per-host baseline."
       }
     },
     {
@@ -594,8 +594,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using VNC for lateral movement, a VNC server binary (tvnserver.exe, winvnc.exe, uvnc-related processes) will execute on a host with no approved VNC software in its inventory.",
-        "rationale": "Because Windows has no built-in VNC server, the mere presence of one is frequently the entire signal, which makes this one of the higher-confidence hypotheses in the pack."
+        "statement": "A VNC server process (tvnserver.exe, winvnc.exe, or an UltraVNC-derived binary) executes on a host absent from the organization's approved remote-support software inventory.",
+        "rationale": "Because Windows carries no built-in VNC server, this is close to a pure presence-based hunt -- the software inventory check does most of the work, and a hit rarely needs much further triage before escalation."
       }
     },
     {
@@ -703,8 +703,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is moving laterally via WinRM, a suspicious child process (cmd.exe, powershell.exe, or unexpected tooling) will be spawned under wsmprovhost.exe.",
-        "rationale": "wsmprovhost.exe as a parent is close to a single-process fingerprint for this entire technique, so a hit here warrants prompt investigation rather than broad tuning."
+        "statement": "A child process other than a known configuration-management agent spawns under wsmprovhost.exe.",
+        "rationale": "wsmprovhost.exe as a parent process is specific enough to WinRM/PowerShell Remoting that this hunt can run with a short, stable exclusion list (DSC, Ansible's WinRM connector) rather than needing continuous tuning."
       }
     },
     {
@@ -805,8 +805,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using a federated identity to move laterally between cloud services, a CLI-based cloud sign-in (Connect-AzAccount, Connect-MgGraph, gcloud auth login) will occur from a location or client pattern inconsistent with that identity's history.",
-        "rationale": "Because there's no network path to observe here the way there is for on-prem lateral movement, cloud audit logs are the only realistic place to test this hypothesis."
+        "statement": "A federated or synced identity authenticates to a cloud console or CLI (Connect-AzAccount, gcloud auth login) from a client or location it has never used in its prior sign-in history.",
+        "rationale": "There is no network-layer corroboration available for this hypothesis the way there is for on-prem lateral movement -- cloud identity and sign-in logs are the entire evidentiary basis, so confirm they're actually being retained and queryable before committing to this hunt."
       }
     },
     {
@@ -883,8 +883,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using a native cloud VM connection feature, CloudTrail/Activity logs will show EC2 Instance Connect, Systems Manager Send-Command/Start-Session, or Azure Serial Console invocation by an identity outside the expected automation/break-glass list.",
-        "rationale": "Given these features often grant SYSTEM/root by default, any unexpected invocation should be treated as equivalent to full VM compromise rather than triaged as a lower-severity lead."
+        "statement": "EC2 Instance Connect, Systems Manager Send-Command/StartSession, or Azure Serial Console is invoked by an identity outside the organization's documented break-glass or automation allowlist.",
+        "rationale": "Because several of these features grant SYSTEM or root by default regardless of the connecting identity's normal permissions, treat any unauthorized invocation as equivalent to full VM compromise rather than a finding that needs corroboration before escalating."
       }
     }
   ]

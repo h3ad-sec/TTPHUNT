@@ -122,8 +122,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is performing DLL injection, a Sysmon 8 (CreateRemoteThread) event will target a process like explorer.exe, svchost.exe, or lsass.exe from a source process with no known legitimate reason to inject.",
-        "rationale": "CreateRemoteThread is rare enough in legitimate software that this hypothesis needs only a short allowlist (debuggers, EDR agents) to be high-confidence."
+        "statement": "A CreateRemoteThread event (Sysmon 8) targets explorer.exe, svchost.exe, or lsass.exe from a source process outside the small set of legitimate callers (debuggers, EDR agents, Process Explorer).",
+        "rationale": "CreateRemoteThread's rarity in benign software is what makes this hunt tractable at scale -- once the short allowlist is applied, remaining hits warrant investigation on their own merit, without needing a second corroborating signal."
       }
     },
     {
@@ -215,8 +215,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is injecting a full PE image rather than a DLL, a memory scan will find an MZ-header-prefixed executable region in a process that isn't backed by any file on disk.",
-        "rationale": "The unbacked-executable-memory-with-PE-header combination is specific enough to differentiate this from ordinary JIT-compiled memory, which lacks the MZ header."
+        "statement": "A memory region marked executable contains a valid MZ/PE header but is not backed by any file on disk.",
+        "rationale": "Distinguish this explicitly from JIT-compiled memory (browsers, .NET, Java), which is unbacked but never carries a PE header -- the header check is what keeps this hypothesis from drowning in false positives from ordinary runtime environments."
       }
     },
     {
@@ -300,8 +300,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is hijacking an existing thread, a target thread will show the OpenThread, SuspendThread, SetThreadContext, ResumeThread sequence from a source process with no debugging relationship to it.",
-        "rationale": "The full sequence together, not any single call in isolation, is what makes this a reliable hypothesis -- legitimate debuggers do the same thing, so scope out known debugging tools first."
+        "statement": "A thread in one process is suspended, has its context modified via SetThreadContext, and is resumed by a second, unrelated process with no established debugging relationship to the first.",
+        "rationale": "Require the full sequence, not any single call, before treating a hit as suspicious -- legitimate debuggers perform each of these operations individually as a matter of course."
       }
     },
     {
@@ -393,8 +393,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using APC injection, NtQueueApcThread/QueueUserAPC will target a thread in a different process, especially one still in a suspended (CREATE_SUSPENDED) state.",
-        "rationale": "Targeting a still-suspended process's main thread specifically distinguishes the Early Bird variant, which is worth testing separately since it's designed to run before most monitoring initializes."
+        "statement": "NtQueueApcThread or QueueUserAPC targets a thread belonging to a different process, particularly one still in a CREATE_SUSPENDED state.",
+        "rationale": "Weight suspended-process targeting more heavily than APC usage in general -- it's the specific signature of the Early Bird variant, designed to execute before most endpoint monitoring has finished initializing on the new process."
       }
     },
     {
@@ -470,8 +470,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is abusing TLS callbacks, a process's TLS directory will be modified during or immediately following process hollowing indicators.",
-        "rationale": "This hypothesis is deliberately scoped to pair with hollowing detection (Sysmon 25) rather than stand alone, since that's how the technique shows up in practice."
+        "statement": "A process's TLS directory is modified in the same window as a Sysmon 25 ProcessTampering event.",
+        "rationale": "Run this hypothesis as a secondary check alongside the Process Hollowing hunt rather than independently -- TLS callback abuse rarely appears without a hollowing step underneath it in practice."
       }
     },
     {
@@ -554,8 +554,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is injecting via ptrace, a ptrace syscall will target a process that isn't the caller's own child, from a process other than a known debugger (gdb, strace, ltrace).",
-        "rationale": "The non-child-target condition is what separates malicious use from ordinary debugging, and it's exactly what Yama's ptrace_scope is designed to restrict."
+        "statement": "A ptrace syscall targets a process that is not the calling process's own child, from a caller outside the known set of debugging tools (gdb, strace, ltrace).",
+        "rationale": "The non-child-target condition is the entire signal -- legitimate debugging almost always attaches to a process the debugger itself spawned, so cross-process ptrace from an unrelated caller is comparatively rare and worth prioritizing."
       }
     },
     {
@@ -638,8 +638,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is building a ROP chain via /proc, a process's /proc/[pid]/mem will be read and written to by another process, potentially using the dd utility rather than a specialized tool.",
-        "rationale": "The dd-against-/proc-mem pattern specifically is documented and rare enough in legitimate use to be a strong starting filter."
+        "statement": "A process's /proc/[pid]/mem is both read from and written to by a second process, and the dd utility appears in that second process's recent command history.",
+        "rationale": "dd against a /proc/mem path has essentially no legitimate administrative use case on a production host, which makes it a stronger initial filter than the underlying /proc access alone."
       }
     },
     {
@@ -715,8 +715,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using EWM injection, SetWindowLong or SetClassLong will be called against Explorer's Shell_TrayWnd from a process other than explorer.exe itself.",
-        "rationale": "This hypothesis specifically catches what CreateRemoteThread/WriteProcessMemory-focused detections miss, since EWM injection is built to avoid exactly those two APIs."
+        "statement": "SetWindowLong or SetClassLong is called against Explorer's Shell_TrayWnd window class from any process other than explorer.exe itself.",
+        "rationale": "This hypothesis is specifically designed to catch what CreateRemoteThread/WriteProcessMemory-focused hunts miss -- EWM injection exists as a technique precisely because those two APIs are so well covered elsewhere."
       }
     },
     {
@@ -808,8 +808,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is hollowing a process, Sysmon 25 (ProcessTampering) will fire, or a process will be created with CREATE_SUSPENDED followed by ZwUnmapViewOfSection and a large memory write.",
-        "rationale": "Confirm Sysmon 25 is actually enabled in your config before relying on this hypothesis -- it isn't part of the default Sysmon setup."
+        "statement": "A process is created with the CREATE_SUSPENDED flag, followed by ZwUnmapViewOfSection and a substantial write to that process's own image memory before its main thread ever resumes.",
+        "rationale": "If Sysmon 25 (ProcessTampering) is enabled in your environment, prioritize that signal over reconstructing this sequence manually -- it exists specifically to catch this exact pattern and is considerably cheaper to query."
       }
     },
     {
@@ -888,8 +888,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using Process Doppelganging, NtCreateProcessEx will be called against a transacted (TxF) file section.",
-        "rationale": "Legitimate software calling this undocumented API against a transacted section is rare enough that a match should be treated as high-confidence rather than a lead needing more corroboration."
+        "statement": "NtCreateProcessEx is called against a section backed by a Transactional NTFS (TxF) transaction.",
+        "rationale": "Legitimate software calling this specific undocumented API against a transacted section is rare enough on modern Windows that a single confirmed hit should be escalated immediately rather than held for corroboration."
       }
     },
     {
@@ -955,8 +955,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is hijacking the vDSO, a process's vDSO memory region or Global Offset Table entries will no longer match the expected kernel-provided content.",
-        "rationale": "Because the vDSO is kernel-provided and never legitimately modified by userspace, this hypothesis has very few benign explanations to rule out."
+        "statement": "A running process's vDSO memory mapping or Global Offset Table entries no longer match the kernel-provided baseline for that kernel version.",
+        "rationale": "Because userspace software has no legitimate reason to modify the vDSO, this hunt has an unusually low expected false-positive rate for a memory-integrity check -- treat any confirmed deviation as a high-priority finding."
       }
     },
     {
@@ -1028,8 +1028,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is using ListPlanting, an LVM_SORTITEMS message will be sent to a SysListView32 control from a process other than the one that created that window.",
-        "rationale": "The cross-process LVM_SORTITEMS trigger is the specific, reliable part of this pattern -- the earlier LVM_SETITEMPOSITION payload-delivery messages look too mundane individually to hunt on directly."
+        "statement": "An LVM_SORTITEMS message is sent to a SysListView32 control by a process other than the one that created that window.",
+        "rationale": "Anchor detection on the LVM_SORTITEMS trigger specifically rather than the preceding LVM_SETITEMPOSITION payload-delivery messages, which are individually indistinguishable from legitimate list-view manipulation."
       }
     }
   ]

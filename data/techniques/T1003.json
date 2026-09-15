@@ -200,8 +200,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is dumping LSASS memory on this host, a non-standard process will hold an open handle to lsass.exe with memory-read access rights (Sysmon 10 GrantedAccess like 0x1010/0x1fffff), often followed by a .dmp file write or a rundll32.exe -> comsvcs.dll command line.",
-        "rationale": "This is testable against telemetry most Windows fleets already collect, and the known-good caller list (AV/EDR engines, WerFault) is short enough to keep false positives manageable."
+        "statement": "A non-security process opens lsass.exe with PROCESS_VM_READ or PROCESS_ALL_ACCESS rights (Sysmon 10 GrantedAccess 0x1010, 0x1410, or 0x1fffff) and, within the same session, either writes a .dmp file to disk or loads comsvcs.dll via rundll32 -- the signature of a credential-dumping attempt against the account database of everyone who has authenticated on this host.",
+        "rationale": "LSASS access is one of the highest-fidelity signals available on Windows precisely because the legitimate-caller list is short and well-known (AV engines, WerFault, a handful of EDR agents); once that list is excluded, remaining hits should be treated as near-certain rather than merely worth a look."
       }
     },
     {
@@ -325,8 +325,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is extracting the local SAM database, reg.exe will run with a save argument targeting hklm\\sam/system/security, producing a .save/.hiv file shortly afterward.",
-        "rationale": "The reg save plus hive-name pattern is specific enough that a match is worth investigating immediately rather than needing further correlation."
+        "statement": "reg.exe (or an equivalent registry API call) exports HKLM\\SAM, HKLM\\SYSTEM, and HKLM\\SECURITY within the same command session -- the three-hive combination attackers need to decrypt local password hashes offline.",
+        "rationale": "Hunt for the hive combination, not any single hive export in isolation: SYSTEM alone is exported far more often for benign reasons (backup jobs, imaging tools) than the full SAM+SYSTEM+SECURITY set together."
       }
     },
     {
@@ -454,8 +454,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is extracting ntds.dit from a domain controller, ntdsutil.exe or vssadmin.exe will run with ifm/create shadow arguments outside a scheduled backup window.",
-        "rationale": "Legitimate DC-level use of these tools is rare and usually scheduled, so an unscheduled hit is high-confidence."
+        "statement": "ntdsutil.exe runs with an 'ifm' argument, or vssadmin.exe creates a shadow copy, on a domain controller with no matching change ticket for that time window.",
+        "rationale": "Because both tools have exactly one legitimate purpose on a DC -- backup and disaster-recovery media creation -- this hypothesis is testable as a pure allowlist problem: enumerate every approved backup job and treat everything else as a live incident, not a lead."
       }
     },
     {
@@ -578,8 +578,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is extracting LSA Secrets, a non-LSASS process will access HKLM\\SECURITY\\Policy\\Secrets, or reg.exe will run a save against hklm\\security.",
-        "rationale": "LSASS itself reads this key constantly, so the hypothesis is specifically scoped to non-LSASS callers to keep the signal clean."
+        "statement": "A process other than lsass.exe opens HKLM\\SECURITY\\Policy\\Secrets, or reg.exe exports hklm\\security specifically, separate from the full three-hive SAM pattern above.",
+        "rationale": "Scope this hunt independently of the SAM hive-export hypothesis -- an isolated SECURITY-only export usually means the operator already has SYSTEM's boot key from a prior step and is now going straight for service-account secrets, which narrows the likely objective."
       }
     },
     {
@@ -704,8 +704,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is harvesting cached domain credentials, a non-LSASS process will access HKLM\\SECURITY\\Cache, or LaZagne/cachedump-style tooling will execute on the host.",
-        "rationale": "Like LSA Secrets, the only expected reader of this key is LSASS itself, making any other caller a strong initial signal."
+        "statement": "A process other than lsass.exe touches HKLM\\SECURITY\\Cache or its NL$ subkeys, or LaZagne/cachedump-style tooling executes on a host that has recently operated offline from the domain.",
+        "rationale": "Correlate this hunt with recent VPN/connectivity gaps for the host -- DCC2 harvesting is disproportionately staged against laptops that were plausibly offline long enough to accumulate a useful cache, which is a cheap way to prioritize which hits to chase first."
       }
     },
     {
@@ -824,8 +824,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is running DCSync, a Security 4662 event will show the DS-Replication-Get-Changes or -All GUID requested by an account that isn't a domain controller or an approved sync/backup identity.",
-        "rationale": "This is one of the few hypotheses in the whole guide with almost no benign explanation once the known-DC and known-service-account allowlist is applied -- a true positive here is a critical incident, not a lead to triage."
+        "statement": "A 4662 audit event on a domain controller shows the DS-Replication-Get-Changes or DS-Replication-Get-Changes-All extended right requested by a security principal that is neither a DC computer account nor an entry on the organization's replication-rights allowlist (Entra Connect, approved AD-aware backup service accounts).",
+        "rationale": "This is one of the few hunts in this guide that should run as a standing detection rather than a periodic sweep -- build and maintain the allowlist once, then treat every subsequent hit as a confirmed incident rather than a hypothesis to re-litigate each time."
       }
     },
     {
@@ -939,8 +939,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is scraping process memory via /proc on Linux, a non-root or unexpected process will open /proc/<pid>/mem or /proc/<pid>/maps for a sensitive target (sshd, a browser, a keyring daemon), or a ps then strings command sequence will run in quick succession.",
-        "rationale": "The ps-then-strings pattern specifically has near-zero legitimate reason to occur back-to-back, making it a good first filter before diving into raw /proc access logs."
+        "statement": "A ps -eo pid,command invocation is followed within seconds by a strings call against a file under /tmp, or any non-root process reads another process's /proc/<pid>/mem or /proc/<pid>/maps entry.",
+        "rationale": "The ps-then-strings pairing is the more actionable of the two signals to start with -- it's the exact sequence mimipenguin-class tooling produces and has essentially no benign equivalent, whereas raw /proc/mem reads need a same-user exclusion to avoid noise from legitimate debugging."
       }
     },
     {
@@ -1041,8 +1041,8 @@
         }
       ],
       "hypothesis": {
-        "statement": "If an adversary is harvesting local Linux credentials, /etc/shadow will be read by a process other than the standard PAM-integrated authentication binaries (login, sshd, sudo, su, passwd).",
-        "rationale": "Because /etc/shadow is root-only by design, any non-auth-binary reader is inherently suspicious rather than merely anomalous."
+        "statement": "/etc/shadow is opened for read by any process outside the standard PAM authentication stack (login, sshd, sudo, su, passwd).",
+        "rationale": "Because the file is 0600 root-owned, this is close to a pure allowlist hunt: build the list of legitimate readers once per OS baseline, and treat anything outside it as a credential-harvesting attempt rather than an anomaly needing further scoring."
       }
     }
   ]
