@@ -1,0 +1,587 @@
+{
+  "id": "T1685",
+  "name": "Disable or Modify Tools",
+  "tactic": "TA0112",
+  "tactic_name": "Defense Impairment",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "Containers",
+    "ESXi",
+    "IaaS",
+    "Network Devices"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1685/",
+  "overview": "Where the Stealth tactic covers hiding from defenses, this technique covers attacking them directly: killing the antivirus process, disabling the EDR service, turning off Windows Event Logging, clearing audit trails, or simply lying to the console that everything is still healthy. It's the technique underneath nearly every ransomware playbook's opening moves and one of the single most consistent behaviors across otherwise-unrelated threat actors — LockBit, BlackByte, REvil, Ryuk, APT41, Turla, and Sandworm all show up in this pack's procedure examples, because \"turn off the thing that would catch me\" is a universal first move regardless of an intrusion's sophistication or objective. The six sub-techniques below split by what's actually being disabled — the logging pipeline itself, the tool's own reported status, or the historical record after the fact — because each produces a completely different gap in what a defender can later reconstruct.",
+  "prerequisite_concepts": [
+    {
+      "term": "This technique is brand new at the tactic level, but the behavior is the oldest trick in the book",
+      "explanation": "MITRE ATT&CK v19 (released 2026-04-28) retired the old T1562 \"Impair Defenses\" technique and elevated its concept to a full tactic, Defense Impairment (TA0112), with its former sub-techniques promoted into standalone top-level techniques carrying new IDs — this pack (T1685) is the direct successor to what used to be T1562.001/.002/.005/.012 and similar. The restructuring is new; disabling AV before running ransomware is not — this is one of the best-documented, most universally observed adversary behaviors in the entire framework, now just organized under a name that matches what it actually does."
+    },
+    {
+      "term": "Impairing detection and impairing prevention are the same technique family, different targets",
+      "explanation": "Stopping Windows Defender is preventative-control impairment — it removes a barrier that might have blocked the payload from running at all. Disabling Windows Event Logging or clearing auditd is detective-control impairment — it removes the evidence a hunter would use to reconstruct what happened after the fact, even if the payload itself was never blocked. Real intrusions frequently do both in the same session (kill the AV, then clear the logs), which is exactly why the sub-techniques below split along the axis of prevention-vs-detection rather than by platform alone."
+    },
+    {
+      "term": "A gap in the record is itself a signal, if you're watching for it",
+      "explanation": "Every sub-technique in this pack produces the same meta-signature regardless of the specific method: telemetry that should exist, doesn't. A host that stops reporting to central logging, an EDR console showing a gap in heartbeat, an audit log with a suspicious jump in record sequence numbers — all of these are detectable without ever seeing the disabling command itself, purely from the absence it creates. Any hunt program mature enough to actively monitor its own coverage (rather than just trusting that agents are still reporting) has a real shot at catching this technique even when the specific disabling method is one it's never seen before."
+    },
+    {
+      "term": "Forwarding logs off-host is the mitigation that actually matters most here",
+      "explanation": "Nearly every sub-technique below shares the same real fix, more than any specific product hardening setting: if the log record already left the host before the adversary got root/admin, deleting or disabling the local copy doesn't undo it. Centralized, low-latency log forwarding to a system the compromised host can't reach with its own elevated privileges is what actually survives this technique family — everything else (permission hardening, immutable audit rules) raises the cost of the attack but doesn't eliminate the single-host blast radius the way off-host forwarding does."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1685.001",
+      "name": "Disable or Modify Windows Event Log",
+      "tactic": "TA0112",
+      "tactic_name": "Defense Impairment",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1685/001/",
+      "overview": "Adversaries stop the EventLog service outright, flip the registry Start value that controls whether it launches at boot, target the less-commonly-audited Autologger registry keys that control session-level logging before the service even initializes, or use auditpol to selectively disable specific audit categories rather than the logging pipeline as a whole. Selective disabling is the quieter variant: turning off just the audit categories that would catch a specific action, rather than the whole EventLog service, produces far less obvious evidence that anything was tampered with at all.",
+      "concepts": [
+        {
+          "term": "Autologger keys let an attacker disable logging before the EventLog service ever starts",
+          "explanation": "The Autologger registry keys under HKLM\\SYSTEM\\CurrentControlSet\\Control\\WMI\\Autologger control session-level event tracing that initializes at boot, before the EventLog service itself has finished starting — modifying the Security-specific Autologger key doesn't require administrator rights the way stopping the EventLog service does, which makes it a lower-privilege, earlier-in-the-boot-sequence way to achieve a very similar blind spot."
+        },
+        {
+          "term": "auditpol lets an attacker disable exactly the one category that would have caught them",
+          "explanation": "Rather than stopping logging wholesale (which is itself a loud, easily-flagged event), `auditpol /set /category:\"Account Logon\" /success:disable /failure:disable` selectively turns off just the audit subcategory relevant to whatever the adversary is about to do, leaving every other log source apparently healthy and reporting normally. A hunt that only checks 'is the EventLog service running' will completely miss this — the service is still up, just silently blind to one specific category of activity."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Sandworm Team",
+          "activity": "Disabled event logging on compromised systems during the 2016 Ukraine electric power attack."
+        },
+        {
+          "actor": "APT29",
+          "activity": "Deployed AUDITPOL commands during the SolarWinds compromise specifically to prevent audit log collection."
+        },
+        {
+          "actor": "Magic Hound",
+          "activity": "Executed scripts specifically designed to disable the EventLog service on compromised hosts."
+        },
+        {
+          "actor": "Threat Group-3390",
+          "activity": "Used appcmd.exe to disable IIS server logging."
+        },
+        {
+          "actor": "HomeLand Justice",
+          "activity": "Deleted Windows events and application logs during a destructive campaign against Albanian government systems."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "Execution of auditpol, wevtutil, or sc config with arguments targeting the EventLog service or specific audit categories."
+        },
+        {
+          "source": "Registry monitoring",
+          "detail": "Writes to HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog's Start value, or to the Autologger registry tree, especially the Security-specific Autologger key."
+        },
+        {
+          "source": "Log-continuity monitoring",
+          "detail": "A gap or unexpected reset in event record sequence numbers, or a host that silently stops reporting a specific audit category while others continue normally."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Audit Policy Category Disabled via auditpol",
+          "description": "Flags auditpol invocations that disable success/failure auditing for a specific category, the quieter selective-blinding variant of this sub-technique.",
+          "query": "title: Audit Policy Category Disabled\nid: 4d8c6a9e-3f7b-4c2a-9d6e-8b3f9c7a4d10\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith: '\\auditpol.exe'\n    CommandLine|contains:\n      - '/success:disable'\n      - '/failure:disable'\n      - '/clear'\n  condition: selection\nfalsepositives:\n  - Deliberate, documented audit-policy tuning performed by a security or compliance team during a planned change window\nlevel: high\ntags:\n  - attack.defense_impairment\n  - attack.t1685.001"
+        },
+        {
+          "language": "KQL",
+          "title": "EventLog Service Stopped or Autologger Registry Modified",
+          "description": "Flags EventLog service state changes or writes to the Autologger registry tree, either of which can silently blind Windows event collection.",
+          "query": "DeviceRegistryEvents\n| where RegistryKey has_any (@\"Services\\EventLog\", @\"WMI\\Autologger\")\n| where ActionType == \"RegistryValueSet\"\n| project Timestamp, DeviceName, RegistryKey, RegistryValueData, InitiatingProcessAccountName\n| order by Timestamp desc"
+        }
+      ],
+      "false_positives": [
+        "Deliberate, documented audit-policy tuning by a security or compliance team during a planned change window",
+        "Legitimate performance-troubleshooting tools that temporarily adjust logging verbosity"
+      ],
+      "response_steps": [
+        "Re-enable the disabled audit category or service immediately and confirm logging has resumed by generating a test event",
+        "Determine exactly which category or Autologger key was targeted, since that tells you what the adversary specifically didn't want recorded",
+        "Reconstruct the gap window using any surviving data source (EDR process telemetry, network logs, centralized forwarding that predates the disabling) since native Windows logs for that window are unreliable",
+        "Check for privilege escalation immediately preceding the change, since most of these methods require administrator rights"
+      ],
+      "mitigations": [
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Regularly review auditpol settings for administrator accounts; baseline expected logging state and alert on deviation."
+        },
+        {
+          "id": "M1024",
+          "name": "Restrict Registry Permissions",
+          "detail": "Protect the EventLog service key and Autologger registry tree from unauthorized modification."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1055.012",
+          "name": "Process Hollowing",
+          "relation": "Disabling the audit category that would catch process-tampering activity is frequently paired with hollowing to remove both the prevention and detection layers at once."
+        }
+      ],
+      "hypothesis": {
+        "statement": "auditpol.exe executes with /success:disable, /failure:disable, or /clear arguments outside a documented, ticketed audit-policy change window.",
+        "rationale": "Anchor this hunt to a change-ticket cross-reference rather than a bare command-line match -- legitimate audit tuning does happen, and without the ticket check this alert will either be ignored as routine noise or will bury the rare malicious instance among planned changes."
+      }
+    },
+    {
+      "id": "T1685.002",
+      "name": "Disable or Modify Cloud Log",
+      "tactic": "TA0112",
+      "tactic_name": "Defense Impairment",
+      "platforms": ["IaaS", "Identity Provider", "Office Suite", "SaaS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1685/002/",
+      "overview": "Adversaries with sufficient cloud IAM or tenant-admin permissions disable CloudTrail, stop VPC Flow Logs, remove an SNS topic a logging pipeline depends on, or turn off Microsoft Purview Audit on a specific mailbox before stealing its contents — all using entirely legitimate administrative actions against the logging service itself, no exploit required. APT29's documented pattern of disabling Purview Audit on targeted accounts specifically before stealing M365 email is the clearest illustration of how deliberately this technique gets sequenced relative to the actual objective.",
+      "concepts": [
+        {
+          "term": "License downgrades are a uniquely cloud-native way to blind logging",
+          "explanation": "M365 Advanced Auditing capabilities are gated by license tier — an account downgraded from an E5 to an E3 license silently loses access to the richer audit log categories that E5 provides, without any explicit 'disable logging' action ever appearing in the audit trail as such. An adversary with tenant-admin rights can achieve a real logging blind spot through what looks, on paper, like a routine licensing change, which is exactly why license-tier changes on privileged or targeted accounts deserve the same scrutiny as an explicit audit-policy change."
+        },
+        {
+          "term": "Pacu automates exactly this against AWS, at scale",
+          "explanation": "Pacu, an open-source AWS exploitation framework, ships purpose-built modules for disabling CloudTrail and VPC flow logs as a standard step in its post-compromise workflow — meaning an adversary doesn't need custom tooling or deep AWS expertise to execute this technique competently, they need only a compromised identity with sufficient permissions and a publicly available script. That accessibility is part of why 'was CloudTrail ever disabled, even briefly' is worth checking as a matter of course during any AWS incident, regardless of the specific actor's apparent sophistication."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT29",
+          "activity": "Disabled Purview Audit on targeted accounts prior to stealing emails from Microsoft 365 tenants."
+        },
+        {
+          "actor": "Pacu",
+          "activity": "Provides purpose-built modules capable of disabling AWS CloudTrail and VPC flow logs as part of its post-exploitation AWS toolkit."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "AWS CloudTrail (from a separate, immutable trail if available)",
+          "detail": "StopLogging, DeleteTrail, or UpdateSink API calls, ideally captured by a trail the compromised identity cannot itself disable."
+        },
+        {
+          "source": "M365 Unified Audit Log / Entra ID audit log",
+          "detail": "Set-MailboxAuditBypassAssociation cmdlet usage, Purview Audit disablement, or a license-tier downgrade applied to a privileged or previously-flagged account."
+        },
+        {
+          "source": "Cloud IAM policy/role activity",
+          "detail": "Permission grants that would newly allow an identity to modify or disable logging configuration, worth monitoring as a precursor to the disabling event itself."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "CloudTrail or VPC Flow Log Disablement",
+          "description": "Flags the core AWS logging-disablement API calls, ideally queried against a separate organization-level trail the compromised account can't itself stop.",
+          "query": "AWSCloudTrail\n| where EventName in (\"StopLogging\", \"DeleteTrail\", \"UpdateTrail\", \"DeleteFlowLogs\")\n| project TimeGenerated, EventName, UserIdentityArn, SourceIPAddress, RequestParameters\n| order by TimeGenerated desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "Mailbox Audit Bypass or Purview Audit Disabled",
+          "description": "Flags Set-MailboxAuditBypassAssociation usage or Purview Audit disablement targeting a specific mailbox, a common precursor to email theft.",
+          "query": "title: Mailbox Audit Bypass Configured\nid: 6a9d4c7e-8f3b-4c2a-9d1e-6f8c9a4d7e30\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: m365\n  service: exchange\ndetection:\n  selection:\n    Operation: 'Set-MailboxAuditBypassAssociation'\n  condition: selection\nfalsepositives:\n  - Legitimate exclusion of a high-volume automated service account from mailbox auditing to reduce log noise, when documented\nlevel: high\ntags:\n  - attack.defense_impairment\n  - attack.t1685.002"
+        }
+      ],
+      "false_positives": [
+        "Legitimate, documented exclusion of a high-volume automated service account from mailbox auditing to reduce log noise",
+        "Approved cost-optimization projects that consolidate or migrate CloudTrail/flow-log configuration as part of an infrastructure change"
+      ],
+      "response_steps": [
+        "Re-enable the disabled logging mechanism immediately and confirm log delivery has resumed",
+        "Check for a separate, adversary-inaccessible organization-level trail or audit source that may have captured the disabling action itself and any activity during the gap",
+        "If a license downgrade was used, review exactly which audit categories were lost for the affected account and treat that scope as the investigation's evidentiary blind spot",
+        "Audit the identity's permissions that allowed it to modify logging configuration in the first place, and scope them down"
+      ],
+      "mitigations": [
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict which identities can modify logging configuration or account license tiers to a small, closely-audited set of administrators, separate from general tenant/IAM administration."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "relation": "The compromised identity typically needs elevated cloud/tenant-admin permissions to disable logging in the first place."
+        },
+        {
+          "id": "T1567.002",
+          "name": "Exfiltration to Cloud Storage",
+          "relation": "Frequently the objective this technique is clearing the way for, disabling the audit trail that would otherwise flag the subsequent bulk data transfer."
+        }
+      ],
+      "hypothesis": {
+        "statement": "An identity with tenant/IAM-admin permissions disables CloudTrail, VPC Flow Logs, or Purview Audit on a specific account, or downgrades that account's license tier, outside a documented change window.",
+        "rationale": "Query this against a logging source the compromised identity cannot itself have disabled -- an organization-level or delegated administrator trail -- since the entire risk of this technique is that the primary log source may not survive to tell you it happened."
+      }
+    },
+    {
+      "id": "T1685.003",
+      "name": "Modify or Spoof Tool UI",
+      "tactic": "TA0112",
+      "tactic_name": "Defense Impairment",
+      "platforms": ["Windows", "Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1685/003/",
+      "overview": "After disabling a security tool, an adversary can go one step further and make its own status display keep reporting \"healthy\" or \"protected\" — the PHASEJAM malware's fake HTML upgrade-progress bar on Ivanti Connect Secure devices is a documented real-world example of exactly this pattern, intercepting the legitimate upgrade flow and rendering a convincing fake progress display so administrators believe patching succeeded when it never actually ran. This sub-technique targets the analyst's or administrator's trust in what the console shows, not the underlying security control itself.",
+      "concepts": [
+        {
+          "term": "This is specifically about the gap between what's reported and what's true",
+          "explanation": "Every other sub-technique in this pack disables something real. This one leaves the disabling of another control invisible by making the management console lie about it — a Windows Defender tile can show green and 'protected' while the underlying WinDefend and MsMpEng services are actually stopped, because the UI layer and the enforcement layer aren't the same code path, and an adversary who can control what the UI reads doesn't need to touch the enforcement layer at all to fool a human glancing at the dashboard."
+        },
+        {
+          "term": "The detection has to compare two independent sources of truth, not trust either alone",
+          "explanation": "Because the entire point of this technique is that the tool's own reported status is unreliable, detection can't be built around asking the tool 'are you healthy' — it has to independently verify service/daemon process state (via the OS's own process list, not the security product's self-report) and compare that against what the management console or local UI claims. A mismatch between 'the process list says MsMpEng.exe is not running' and 'the Defender tile says protected' is the actual signal, and it requires two separate telemetry sources that don't share the same potentially-compromised code path."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "PHASEJAM",
+          "activity": "Intercepted Ivanti Connect Secure system upgrade commands and rendered a fraudulent HTML upgrade-progress bar via a processUpgradeDisplay() function, preventing legitimate patching while appearing to succeed."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Independent process/service enumeration",
+          "detail": "OS-level process list or service-manager state for known security tool processes (MsMpEng.exe, WinDefend), compared against what the tool's own UI or management console reports."
+        },
+        {
+          "source": "EDR/management-console heartbeat logs",
+          "detail": "A centralized management console's own record of last-checkin time and reported health, cross-referenced against actual endpoint telemetry volume for the same period."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Security Tool Reports Healthy While Core Process Is Stopped",
+          "description": "Flags a mismatch between a security product's self-reported health status and the actual running state of its core enforcement process, the core Modify/Spoof Tool UI signature.",
+          "query": "title: Security Tool UI-Reality Mismatch\nid: 3f9d7a4c-6e8b-4c2a-9d1f-7c4b9a3e6d80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_stopped:\n    ServiceName|in:\n      - 'WinDefend'\n      - 'MsMpEng'\n    ServiceState: 'stopped'\n  selection_ui_healthy:\n    ReportedHealth: 'protected'\n  condition: selection_stopped and selection_ui_healthy\nfalsepositives:\n  - A brief, expected state-transition window during a legitimate security product update or reinstallation\nlevel: critical\ntags:\n  - attack.defense_impairment\n  - attack.t1685.003"
+        }
+      ],
+      "false_positives": [
+        "A brief, expected state-transition window during a legitimate security product update, reinstallation, or version upgrade"
+      ],
+      "response_steps": [
+        "Treat the affected host as having had unmonitored, unprotected time regardless of what its console showed, and scope the investigation to that entire window",
+        "Identify how the UI-spoofing component itself was delivered and whether it's a documented malware family or a bespoke tool",
+        "Reinstall or fully reimage the affected security tool rather than trusting a simple restart, since the spoofing component may persist alongside it",
+        "Audit every other host managed by the same console for the same reported-vs-actual mismatch"
+      ],
+      "mitigations": [
+        {
+          "id": "M1038",
+          "name": "Execution Prevention",
+          "detail": "Deploy application control to prevent installation and execution of payloads built for security-alerting or tool-UI spoofing."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1685.001",
+          "name": "Disable or Modify Windows Event Log",
+          "relation": "Frequently paired together — disable the real logging, then spoof the console so nobody notices it happened."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A host's security tool management console reports a 'protected' or 'healthy' status while independent process/service enumeration shows that tool's core enforcement process is not running.",
+        "rationale": "Source both halves of this comparison from telemetry paths that don't share code with the tool being checked -- if the same compromised agent is asked to confirm its own health, this hunt is structurally blind to exactly the case it exists to catch."
+      }
+    },
+    {
+      "id": "T1685.004",
+      "name": "Disable or Modify Linux Audit System Log",
+      "tactic": "TA0112",
+      "tactic_name": "Defense Impairment",
+      "platforms": ["Linux"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1685/004/",
+      "overview": "With root, an adversary can stop the auditd daemon outright, edit audit.rules or audit.conf to narrow what gets captured, or hook the audit library functions themselves so that logging silently no-ops even while auditd appears to keep running. Ebury's documented behavior of disabling OpenSSH, systemd, and auditd together the moment its backdoor activates shows how this sub-technique is frequently just one item in a coordinated shutdown of multiple monitoring layers at once, not an isolated action.",
+      "concepts": [
+        {
+          "term": "Rule-file editing is quieter than killing the daemon",
+          "explanation": "Stopping auditd outright is a loud, binary event — auditd is either running or it isn't, and its absence is trivially checkable. Editing /etc/audit/audit.rules or audit.conf to simply narrow what gets captured (removing the specific rule that would flag the adversary's own activity) leaves auditd fully running and reporting healthy, while quietly blind to exactly the behavior that matters. This is the Linux-native equivalent of the selective auditpol category-disabling trick on Windows, and it defeats the same naive 'is the daemon up' check."
+        },
+        {
+          "term": "The immutable flag is a real, if narrow, way to close this specific door",
+          "explanation": "Setting `-e 2` as the final line in audit.rules puts the running audit configuration into an immutable state that cannot be changed without a full reboot, even by root — meaning an adversary who compromises a root shell mid-session literally cannot alter the audit rules on that running system no matter what privileges they hold, only schedule a change for the next boot (which itself would be a detectable, disruptive action on a server). It's one of the few mitigations in this entire pack that provides a genuine technical floor rather than just raising the cost of the attack."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Ebury",
+          "activity": "Disables OpenSSH, systemd, and the auditd daemon together at /sbin/auditd when its SSH backdoor is actively in use."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "auditd (self-monitoring, if forwarded off-host)",
+          "detail": "auditctl or systemctl invocations targeting the auditd service, ideally captured by a forwarding pipeline that predates any local tampering."
+        },
+        {
+          "source": "File integrity monitoring on /etc/audit/",
+          "detail": "Modifications to audit.rules or audit.conf, especially removal of specific rules rather than the whole file, which is the quieter variant of this technique."
+        },
+        {
+          "source": "Process monitoring",
+          "detail": "Unexpected termination of the auditd process itself, correlated with the privileged session that caused it."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "auditd",
+          "title": "Modification to Audit Configuration Files",
+          "description": "Base auditd rule watching writes to the audit configuration itself -- ironically the one thing that has to be captured before any tampering takes effect.",
+          "query": "auditctl -w /etc/audit/audit.rules -p wa -k audit_config_change\nauditctl -w /etc/audit/auditd.conf -p wa -k audit_config_change"
+        },
+        {
+          "language": "Sigma",
+          "title": "auditd Process Terminated or Disabled via systemctl",
+          "description": "Flags systemctl or direct process-termination commands targeting the auditd daemon, forwarded off-host to survive the tampering it's meant to catch.",
+          "query": "title: auditd Service Stopped or Disabled\nid: 8d3f6a9c-4e7b-4c2a-9d1e-6b3f9c8a4d20\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: linux\n  service: auditd\ndetection:\n  selection:\n    type: 'SERVICE_STOP'\n    unit: 'auditd.service'\n  condition: selection\nfalsepositives:\n  - Planned maintenance windows where auditd is intentionally stopped for an upgrade, if documented\nlevel: critical\ntags:\n  - attack.defense_impairment\n  - attack.t1685.004"
+        }
+      ],
+      "false_positives": [
+        "Planned maintenance windows where auditd is intentionally stopped for a version upgrade, if documented in a change ticket"
+      ],
+      "response_steps": [
+        "Restart auditd immediately and confirm rule integrity against a known-good baseline copy of audit.rules",
+        "Since this technique requires root, treat the finding as confirmation of root-level compromise on the host, not just a policy violation",
+        "Reconstruct the gap window from off-host telemetry (centralized syslog forwarding, EDR, network logs) since local audit data for that window is unreliable",
+        "Apply the `-e 2` immutable flag going forward if it wasn't already set, to prevent runtime modification without a reboot"
+      ],
+      "mitigations": [
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Regularly verify auditd is running and its rule set matches baseline; implement immutable audit rules (`auditctl -e 2`) as the final line in audit.rules."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict root-level access through least-privilege principles, since this technique fundamentally requires root credentials to execute."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1055.008",
+          "name": "Ptrace System Calls",
+          "relation": "Both require root-equivalent access on Linux and are frequently used together as part of the same post-compromise toolkit."
+        }
+      ],
+      "hypothesis": {
+        "statement": "The auditd service is stopped, or /etc/audit/audit.rules is modified to remove a specific rule, outside a documented maintenance window, on a host where the change was captured only by local logging.",
+        "rationale": "Prioritize any hit where the disabling event was NOT also seen in a centralized/forwarded log source -- that combination means the adversary's timing (tampering right before or during the window a forwarding pipeline might have caught it) may have been deliberate, and it tells you exactly how much of the local record to distrust."
+      }
+    },
+    {
+      "id": "T1685.005",
+      "name": "Clear Windows Event Logs",
+      "tactic": "TA0112",
+      "tactic_name": "Defense Impairment",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1685/005/",
+      "overview": "Rather than disabling logging going forward, an adversary with administrative privileges wipes the existing record clean — `wevtutil cl system`, `wevtutil cl security`, PowerShell's Remove-EventLog, or direct deletion of the .evtx files themselves. This is the single most consistently observed anti-forensic action across the threat landscape in this whole pack, appearing in the procedure examples of nation-state groups (APT28, APT32, APT38, Volt Typhoon) and commodity ransomware (LockBit, NotPetya, BlackCat, RansomHub) with almost identical tooling and timing.",
+      "concepts": [
+        {
+          "term": "wevtutil's clear operation isn't instantaneous, and that gap matters",
+          "explanation": "Events can still be generated and written to the .evtx file in the interval between the clear command executing and any subsequent reboot, which means a forensic examiner checking the log file's actual on-disk timestamp/size against when the clear command ran can sometimes recover a sliver of post-clear activity the adversary didn't anticipate would survive. It's a narrow window, but it's the kind of detail worth checking specifically rather than assuming a cleared log means a total loss."
+        },
+        {
+          "term": "Log clearing is a confession, not just an evasion",
+          "explanation": "Legitimate administrators essentially never clear the Security event log during normal operations — there's no routine business reason to do it, unlike, say, rotating a log for space. That makes 'Security log was cleared' one of the highest-confidence single-event indicators in this entire tool: it doesn't just fail to prove innocence, its mere occurrence is close to definitive evidence that something happened worth investigating, which is why Event ID 1102 (the clear-event itself, ironically still logged) is treated as a near-unconditional page-immediately alert in mature SOCs."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT28",
+          "activity": "Used wevtutil cl System and wevtutil cl Security commands to clear Windows event logs after intrusion activity."
+        },
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Selectively cleared Windows Event Logs, system logs, and other technical artifacts to hinder investigation into critical infrastructure intrusions."
+        },
+        {
+          "actor": "LockBit 2.0 / 3.0",
+          "activity": "Deletes log files via wevtutil as part of its standard ransomware deployment routine."
+        },
+        {
+          "actor": "HermeticWiper",
+          "activity": "Overwrites the C:\\Windows\\System32\\winevt\\Logs directory directly, going beyond a simple clear to destroy the log files themselves."
+        },
+        {
+          "actor": "RansomHub",
+          "activity": "Deletes Security, System, and Application event logs as part of its pre-encryption defense-impairment routine."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Security Event 1102",
+          "detail": "\"The audit log was cleared\" — logged by the system itself at the moment of clearing, ironically surviving the very action it records; one of the highest-confidence single-event indicators available anywhere in this tool."
+        },
+        {
+          "source": "Sysmon 1 / Security 4688",
+          "detail": "Execution of wevtutil with 'cl' (clear) arguments, or PowerShell's Remove-EventLog cmdlet."
+        },
+        {
+          "source": "File system monitoring on winevt\\Logs",
+          "detail": "Direct deletion or overwrite of .evtx files, bypassing the wevtutil command entirely, as seen with wiper-class malware."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Security Event Log Cleared (Event 1102)",
+          "description": "Flags the Security log clear event directly -- among the highest-confidence single-signal indicators in the entire pack, since legitimate administration essentially never triggers it.",
+          "query": "SecurityEvent\n| where EventID == 1102\n| project TimeGenerated, Computer, Account = SubjectUserName, Activity\n| order by TimeGenerated desc"
+        },
+        {
+          "language": "Sigma",
+          "title": "wevtutil Log Clear Command",
+          "description": "Flags wevtutil invocations with the clear (cl) parameter against any of the core Windows log channels.",
+          "query": "title: wevtutil Event Log Clear\nid: 7e4b9c3d-6f8a-4c2e-9d1b-7f4c9a6e3d80\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith: '\\wevtutil.exe'\n    CommandLine|contains: 'cl '\n  condition: selection\nfalsepositives:\n  - Extremely rare in legitimate administration; possibly a scripted log-rotation tool on a non-standard, undocumented schedule\nlevel: critical\ntags:\n  - attack.defense_impairment\n  - attack.t1685.005"
+        }
+      ],
+      "false_positives": [
+        "Extremely rare; a scripted, undocumented log-rotation or log-archival tool is close to the only benign explanation, and even that should be formally documented rather than assumed"
+      ],
+      "response_steps": [
+        "Treat Event 1102 or a wevtutil clear command as a near-unconditional escalation trigger — page the on-call analyst rather than queuing for routine triage",
+        "Immediately pull any centralized/forwarded copy of the logs from before the clear event, since that's now the only reliable record of what happened on that host",
+        "Check the file timestamp and size of the .evtx file itself for evidence of the narrow window where new events may have been written after the clear but before any reboot",
+        "Treat every action taken by the account that performed the clear, both before and after, as maximum priority for review"
+      ],
+      "mitigations": [
+        {
+          "id": "M1029",
+          "name": "Remote Data Storage",
+          "detail": "Automatically forward events to a centralized log server or SIEM with minimal delay, so a local clear cannot remove evidence that already left the host."
+        },
+        {
+          "id": "M1022",
+          "name": "Restrict File and Directory Permissions",
+          "detail": "Protect the .evtx log files and limit which accounts can invoke wevtutil's clear function or reach privilege levels that allow it."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1486",
+          "name": "Data Encrypted for Impact",
+          "relation": "Log clearing is a near-universal step immediately before ransomware encryption begins, across nearly every major ransomware family referenced in this tool."
+        }
+      ],
+      "hypothesis": {
+        "statement": "Security Event 1102 fires, or wevtutil executes with a 'cl' argument against any core Windows log channel, on any host at any time.",
+        "rationale": "Do not scope or filter this hypothesis at all before alerting -- unlike nearly every other hunt in this tool, a false-positive rate this low means the right move is to treat every single hit as worth an analyst's immediate attention, not to tune it down."
+      }
+    },
+    {
+      "id": "T1685.006",
+      "name": "Clear Linux or Mac System Logs",
+      "tactic": "TA0112",
+      "tactic_name": "Defense Impairment",
+      "platforms": ["Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1685/006/",
+      "overview": "Adversaries clear or truncate the log files under /var/log/ — auth.log, syslog, wtmp, btmp, lastlog, and shell history — to remove the record of their own logon and command activity, a technique documented across a wide range of actors from Salt Typhoon's systematic clearing of authentication and session logs to commodity cryptomining worms like TeamTNT and Rocke that clear syslog as a routine part of their infection chain.",
+      "concepts": [
+        {
+          "term": "Shell history is a log too, and it's the easiest one to quietly skip",
+          "explanation": "Sea Turtle's pattern of overwriting Linux system logs and unsetting the Bash history file in the same action treats command history as just another log source to clean up — which it functionally is, since .bash_history (or its equivalent) is frequently the clearest record of exactly what commands an intruder ran interactively. `unset HISTFILE` or `history -c` leaves no trace in the file itself because the file was never written to in the first place, which is a subtly different and in some ways quieter variant than clearing an existing log after the fact."
+        },
+        {
+          "term": "Multiple log files, one coordinated wipe, is the actual pattern to hunt",
+          "explanation": "Salt Typhoon's approach of clearing bash_history, auth.log, lastlog, wtmp, and btmp together in the same session reflects the real operational pattern: a single log-clearing command rarely targets just one file, because an adversary thinking carefully about their own tradecraft knows that authentication records, session records, and command history all need to be cleaned together for the story to hold up. A hunt that only watches one of these five files individually will miss the broader event that watching for a coordinated multi-file clear in a tight time window would catch."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Salt Typhoon",
+          "activity": "Cleared multiple log types together, including .bash_history, auth.log, lastlog, wtmp, and btmp, during compromises of telecommunications infrastructure."
+        },
+        {
+          "actor": "Sea Turtle",
+          "activity": "Overwrote Linux system logs and unset the Bash history file during intrusion activity."
+        },
+        {
+          "actor": "TeamTNT",
+          "activity": "Removed logs from /var/log/syslog as a routine step in its cryptomining worm infection chain."
+        },
+        {
+          "actor": "Rocke",
+          "activity": "Cleared log files within the /var/log/ folder as part of its cryptomining campaign tradecraft."
+        },
+        {
+          "actor": "Proton",
+          "activity": "Removes logs from /var/logs and /Library/logs on compromised macOS systems."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "auditd / forwarded syslog (from before any local tampering)",
+          "detail": "Truncation, deletion, or zero-byte resets of files under /var/log/, ideally observed via a forwarding pipeline that captured the file's state before it was cleared."
+        },
+        {
+          "source": "Shell history integrity",
+          "detail": "A user session with no corresponding .bash_history entries at all, or a HISTFILE/HISTSIZE environment variable unset mid-session, inconsistent with genuine interactive use."
+        },
+        {
+          "source": "Process command-line logging",
+          "detail": "Execution of truncate, echo > (redirect-to-empty), rm, or history -c targeting log files or shell history, especially by a non-administrative account."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Coordinated Multi-File Log Clear in /var/log",
+          "description": "Flags truncation or deletion of multiple distinct log files under /var/log within a short window, the Salt Typhoon-style coordinated wipe pattern rather than a single-file event.",
+          "query": "title: Coordinated Log Clearing Under var-log\nid: 9c4e7a3d-6f8b-4c2a-9d1e-7f3c9a6d4e80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: linux\ndetection:\n  selection:\n    TargetFilename|startswith: '/var/log/'\n    EventType|in:\n      - 'truncate'\n      - 'delete'\n  timeframe: 5m\n  condition: selection | count(TargetFilename) by ProcessGuid > 2\nfalsepositives:\n  - Legitimate logrotate execution, which should be distinguishable by its own well-known process name and predictable schedule\nlevel: high\ntags:\n  - attack.defense_impairment\n  - attack.t1685.006"
+        },
+        {
+          "language": "auditd",
+          "title": "Shell History File Unset or Cleared",
+          "description": "Base auditd rule watching for HISTFILE environment tampering or direct history-clearing commands within an interactive session.",
+          "query": "auditctl -a always,exit -F arch=b64 -S execve -F exe=/bin/bash -F key=shell_history_tamper"
+        }
+      ],
+      "false_positives": [
+        "Legitimate logrotate execution, which follows a predictable schedule and uses its own well-documented process rather than ad hoc truncation commands",
+        "A user legitimately clearing their own shell history for personal privacy reasons, unrelated to any compromise"
+      ],
+      "response_steps": [
+        "Identify every log file affected in the same session, not just the first one noticed, since this technique is typically executed as a coordinated multi-file wipe",
+        "Pull any centralized/forwarded copy of the affected logs from before the clearing event",
+        "Reconstruct the session using surviving evidence (network logs, EDR process telemetry, other hosts' records of the same source IP/account) since local records for the window are unreliable",
+        "Check for the account or session's activity both immediately before and after the log-clearing event, since the clearing itself marks the boundary of what the adversary wanted hidden"
+      ],
+      "mitigations": [
+        {
+          "id": "M1029",
+          "name": "Remote Data Storage",
+          "detail": "Forward /var/log contents and shell history to a centralized, adversary-inaccessible log server with minimal delay."
+        },
+        {
+          "id": "M1022",
+          "name": "Restrict File and Directory Permissions",
+          "detail": "Protect local log files and shell history configuration with proper access controls limiting which accounts can truncate or delete them."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1685.004",
+          "name": "Disable or Modify Linux Audit System Log",
+          "relation": "Frequently executed in the same session — disable the audit daemon first, then clear the general-purpose logs that would otherwise still show session/command activity."
+        }
+      ],
+      "hypothesis": {
+        "statement": "More than two distinct files under /var/log are truncated or deleted by the same process or session within a five-minute window, outside of a recognized logrotate execution.",
+        "rationale": "The coordinated-multi-file pattern is the actual signal here, not any single file's clearing -- score a single truncated log as routine noise, but treat several going at once, close together, as the real Salt Typhoon-style indicator worth escalating."
+      }
+    }
+  ]
+}
