@@ -1,6 +1,6 @@
 {
   "generated": "2026-09-15",
-  "count": 15,
+  "count": 16,
   "techniques": [
     {
       "id": "T1003",
@@ -238,6 +238,20 @@
         { "id": "T1685.004", "name": "Disable or Modify Linux Audit System Log" },
         { "id": "T1685.005", "name": "Clear Windows Event Logs" },
         { "id": "T1685.006", "name": "Clear Linux or Mac System Logs" }
+      ]
+    },
+    {
+      "id": "T1598",
+      "name": "Phishing for Information",
+      "tactic": "TA0043",
+      "tactic_name": "Reconnaissance",
+      "platforms": ["PRE"],
+      "file": "techniques/T1598.json",
+      "subtechniques": [
+        { "id": "T1598.001", "name": "Spearphishing Service" },
+        { "id": "T1598.002", "name": "Spearphishing Attachment" },
+        { "id": "T1598.003", "name": "Spearphishing Link" },
+        { "id": "T1598.004", "name": "Spearphishing Voice" }
       ]
     }
   ]

@@ -1,0 +1,396 @@
+{
+  "id": "T1598",
+  "name": "Phishing for Information",
+  "tactic": "TA0043",
+  "tactic_name": "Reconnaissance",
+  "platforms": [
+    "PRE"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1598/",
+  "overview": "This is the one Reconnaissance technique that actually lands in your environment rather than staying entirely on attacker-controlled infrastructure you can't see: the adversary sends a message — email, a link, a service DM, or a phone call — with no malware attached at all, purely to trick the recipient into typing back a credential, an email address list, or some other piece of actionable intelligence. The distinction from T1566 (Phishing, Initial Access) is the objective, not the delivery mechanism: T1566 wants code execution or a foothold, this technique just wants the target to hand over information voluntarily, which means there's frequently no attachment to sandbox and no payload to detonate — the entire attack is the conversation itself. The four sub-techniques below mirror T1566's structure exactly (service, attachment, link, voice) because the same delivery channels serve both objectives; what changes is that the reconnaissance version is often quieter, more patient, and harder to distinguish from a legitimate inquiry until the ask for information arrives.",
+  "prerequisite_concepts": [
+    {
+      "term": "Why 'no malware' doesn't mean 'no detection surface'",
+      "explanation": "A phishing-for-information message can be entirely benign at the file level — a plain-text email, a DM on LinkedIn, a phone call — which means file-scanning, sandboxing, and attachment-reputation controls have nothing to catch here at all. Detection has to shift almost entirely to the request pattern itself and to what happens after: does the message ask for credentials or sensitive data, does a link lead to a credential-harvesting page, does a caller's number match a known-malicious pattern. This is the same shift in emphasis TTPHUNT's other Reconnaissance analysis flagged as the reason most of this tactic isn't worth hunting internally — T1598 earns its place specifically because the ask itself is the artifact, not because it magically produces a file to scan."
+    },
+    {
+      "term": "This is frequently the first phase of a longer campaign, not a standalone event",
+      "explanation": "Star Blizzard's pattern of building rapport across several benign messages before ever sending the credential-harvesting link, and Scattered Spider's practice of using stolen information from one phishing-for-information call to make the next call (against a different target, or against IT help desk staff) more convincing, both show this technique as reconnaissance in the literal sense — its output feeds directly into a later, more damaging action. A hunter who confirms a T1598 attempt should treat it as advance warning that a related T1566 or T1078 attempt against the same organization, using whatever was harvested, is likely still to come."
+    },
+    {
+      "term": "The credential harvested here is what makes T1078 and T1558 possible later",
+      "explanation": "This technique's entire output — a password, an MFA code read aloud on a call, a list of employee email addresses — is raw material for exactly the packs TTPHUNT already covers in depth: T1078 (Valid Accounts) for using a stolen credential, T1558 (Kerberos ticket abuse) once inside, T1566 for a more damaging follow-on phishing wave now armed with real employee names and roles. Hunting T1598 well is, in effect, hunting for the earliest and cheapest point to break a chain that otherwise runs straight into techniques this tool already treats as high priority."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1598.001",
+      "name": "Spearphishing Service",
+      "tactic": "TA0043",
+      "tactic_name": "Reconnaissance",
+      "platforms": ["PRE"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1598/001/",
+      "overview": "Adversaries reach targets through a third-party platform — LinkedIn, Telegram, WhatsApp, a consumer webmail account — rather than the corporate inbox, betting that a personal or informal channel carries less inherent suspicion and sits entirely outside the enterprise email security stack. Scattered Spider's use of Telegram messages impersonating IT support to extract credentials from telecom and BPO employees is a clean example of the pattern: the platform choice itself is what defeats every mail-gateway control the organization has invested in, since the message never touches a mail server the organization controls at all.",
+      "concepts": [
+        {
+          "term": "The platform choice is the evasion, and it's mostly outside your visibility by design",
+          "explanation": "A message sent via LinkedIn DM or Telegram to an employee's personal account never crosses any log source the organization owns unless the conversation later spills onto a corporate device — there's no mail gateway, no corporate DLP, no SIEM ingestion point for it at all. That's precisely why MITRE's own detection guidance for this sub-technique leans on network-traffic anomalies (a corporate endpoint suddenly generating unusual messaging-app traffic) rather than content inspection: the content itself is frequently never visible to the defender, only the fact that an employee's device is talking to a personal messaging service more than its baseline."
+        },
+        {
+          "term": "Time pressure across multiple short messages is a deliberate pattern, not just urgency",
+          "explanation": "MITRE's own description highlights adversaries sending multiple, closely-timed messages specifically to create urgency and short-circuit careful consideration — a single well-crafted message is easier to scrutinize at leisure than a rapid-fire sequence that implies the target has to respond immediately. That message-frequency pattern (several messages from an unfamiliar contact in a short window, especially outside business hours) is itself a weak but real signal worth correlating with any other indicator of a targeted approach."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Scattered Spider",
+          "activity": "Deployed Telegram messages impersonating IT support personnel to extract credentials from telecom and BPO sector employees during a coordinated intrusion campaign."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Corporate device network traffic",
+          "detail": "Unusual outbound traffic to consumer messaging platforms (Telegram, WhatsApp, personal webmail) from a managed endpoint, especially at a volume or time inconsistent with that user's normal pattern."
+        },
+        {
+          "source": "Endpoint application inventory",
+          "detail": "Installation or first-use of a messaging application not part of the organization's approved communication tool set."
+        },
+        {
+          "source": "Employee self-reporting",
+          "detail": "Given the limited technical visibility into personal-platform conversations, a reported-suspicious-message workflow is frequently the only realistic detection path for this specific sub-technique."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Managed Endpoint Generating Unapproved Messaging App Traffic",
+          "description": "Flags a corporate-managed endpoint communicating with a consumer messaging platform not on the organization's approved application list, a weak but real signal for this largely-invisible sub-technique.",
+          "query": "title: Unapproved Messaging Platform Traffic from Managed Endpoint\nid: 6c9f4a3d-8e2b-4c7a-9d1f-6b3c9a4e8d70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  selection:\n    DestinationHostname|contains:\n      - 'telegram.org'\n      - 'web.whatsapp.com'\n  filter_approved:\n    DestinationHostname|contains: 'ApprovedCommsPlatforms'\n  condition: selection and not filter_approved\nfalsepositives:\n  - Legitimate personal use of a messaging platform during breaks, on a BYOD or lightly-managed endpoint\nlevel: low\ntags:\n  - attack.reconnaissance\n  - attack.t1598.001"
+        }
+      ],
+      "false_positives": [
+        "Legitimate personal use of a consumer messaging platform during breaks, particularly on lightly-managed or BYOD endpoints",
+        "Approved business use of a messaging platform for vendor or partner communication that hasn't yet been added to the allow-list"
+      ],
+      "response_steps": [
+        "Interview the targeted employee to reconstruct the full conversation and identify exactly what information, if any, was disclosed",
+        "Treat any disclosed credential or internal detail as compromised immediately — reset the credential and review for its use elsewhere",
+        "Report the impersonating account/profile to the platform's abuse team to get it taken down",
+        "Brief the security-awareness program on the specific pretext used, since a successful pretext against one employee is frequently reused against others in the same organization"
+      ],
+      "mitigations": [
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Train employees to recognize social-engineering pretexts delivered over personal/consumer platforms and to report unsolicited requests for credentials or internal information regardless of the channel."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1566.003",
+          "name": "Spearphishing via Service",
+          "relation": "The same third-party-platform delivery channel, used here for information gathering rather than direct malware/access delivery — often the reconnaissance phase that precedes it."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A managed corporate endpoint generates network traffic to a consumer messaging platform not on the organization's approved communications allow-list, at a volume inconsistent with that user's established baseline.",
+        "rationale": "Treat this hunt as a coarse, low-confidence tripwire rather than a precision detector -- the actual conversation content is invisible to you by design, so pair any hit with a direct, low-friction employee-reporting channel rather than expecting the technical signal alone to carry the investigation."
+      }
+    },
+    {
+      "id": "T1598.002",
+      "name": "Spearphishing Attachment",
+      "tactic": "TA0043",
+      "tactic_name": "Reconnaissance",
+      "platforms": ["PRE"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1598/002/",
+      "overview": "Adversaries send a targeted email with a document attached — most often a form, survey, or invoice-style file — asking the recipient to fill it out and return it, or embedding an HTML-smuggled fake login prompt inside the attachment itself that harvests credentials the moment the victim tries to open it. Unlike T1566.001's malware-laden attachments, the file here is frequently not malicious in the traditional sense at all; the social engineering and the request for information is the entire payload, which is exactly why it can slip past antivirus and sandboxing controls tuned to catch executable or macro-based threats.",
+      "concepts": [
+        {
+          "term": "A completely benign file can still be the whole attack",
+          "explanation": "A Word document that's just a form asking for personal details, or a PDF survey with a return-to address, contains no exploit code and no macro at all — a sandbox detonation would show nothing suspicious because there's genuinely nothing malicious in the file's behavior. The entire compromise happens when the human fills in the requested fields and sends it back, which means this sub-technique defeats every file-analysis control by simply not needing to do anything a file-analysis control is built to catch."
+        },
+        {
+          "term": "HTML smuggling turns the attachment into a credential-harvesting page without a link at all",
+          "explanation": "Rather than a plain document, some campaigns embed an HTML file that reconstructs a fake login portal locally in the victim's browser once opened, assembling the malicious content client-side from encoded fragments that a network-layer scanner never sees as a single suspicious blob in transit. This gives the attachment version of this sub-technique a way to achieve the exact same credential-harvesting outcome as the Link variant below, while evading URL-reputation and network-content-inspection controls that only look at what crosses the wire, not what a browser assembles after the fact."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Dragonfly",
+          "activity": "Deployed Microsoft Office attachments in spearphishing campaigns specifically targeting credential harvesting rather than direct malware delivery."
+        },
+        {
+          "actor": "SideCopy",
+          "activity": "Crafted generic spam lures designed to collect email addresses and credentials for later targeting operations."
+        },
+        {
+          "actor": "Sidewinder",
+          "activity": "Distributed emails with malicious attachments that redirected victims to credential-stealing websites rather than executing malware directly."
+        },
+        {
+          "actor": "Star Blizzard",
+          "activity": "Established rapport through initial benign messages before sending attachment-based emails linking to credential-harvesting sites."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Email gateway / attachment metadata",
+          "detail": "Inbound messages with form-style or survey-style attachments requesting personal or credential information, especially from a first-time or spoofed sender."
+        },
+        {
+          "source": "DKIM/SPF/DMARC validation results",
+          "detail": "Sender authentication failures or near-misses on domains resembling a trusted partner or internal address, a strong signal independent of the attachment's actual content."
+        },
+        {
+          "source": "Browser telemetry",
+          "detail": "An HTML attachment opened locally that subsequently renders a credential-form-like page, especially one referencing a login flow for a service the local file has no legitimate reason to represent."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "HTML Attachment Opened Locally Rendering a Login-Style Form",
+          "description": "Flags a browser process opening a local HTML file (rather than a remote URL) that subsequently loads form fields resembling a credential prompt, the HTML-smuggling variant of this sub-technique.",
+          "query": "title: Local HTML Attachment Rendering Credential Form\nid: 3d7a9c6e-8f2b-4c4a-9d1f-7b3c9a6e4d80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: network_connection\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\chrome.exe'\n      - '\\msedge.exe'\n    Initiated: 'false'\n    DestinationIp: '127.0.0.1'\n  condition: selection\nfalsepositives:\n  - Legitimate locally-rendered HTML reports or dashboards opened as file attachments by internal tooling\nlevel: medium\ntags:\n  - attack.reconnaissance\n  - attack.t1598.002"
+        },
+        {
+          "language": "KQL",
+          "title": "Inbound Email With Form-Style Attachment From First-Time Sender",
+          "description": "Surfaces inbound messages carrying a document or HTML attachment requesting personal information, from a sender domain with no prior correspondence history.",
+          "query": "EmailAttachmentInfo\n| where FileType in (\"docx\", \"pdf\", \"html\", \"htm\")\n| join kind=inner (\n    EmailEvents\n    | where SenderFromDomain !in (KnownCorrespondentDomains)\n) on NetworkMessageId\n| project Timestamp, SenderFromAddress, RecipientEmailAddress, FileName\n| order by Timestamp desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate HR, vendor, or partner forms and surveys distributed as part of routine business processes",
+        "Internal reporting tools that generate and email locally-rendered HTML dashboards as attachments"
+      ],
+      "response_steps": [
+        "Determine whether the recipient completed and returned the form, and if so, treat every piece of information disclosed as compromised",
+        "Extract and analyze the attachment for HTML-smuggling indicators even if it appeared to trigger no antivirus alert, since that's expected for this sub-technique",
+        "Identify every other recipient of the same or a similar lure across the organization",
+        "Feed the sender domain and lure pretext into the email gateway's blocklist and brief the security-awareness program"
+      ],
+      "mitigations": [
+        {
+          "id": "M1054",
+          "name": "Software Configuration",
+          "detail": "Implement SPF, DKIM, and DMARC to validate sender domains and detect spoofed senders, independent of whether the attachment itself is flagged malicious."
+        },
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Train employees that a request for personal or credential information delivered via a form-style attachment is a red flag regardless of whether the file itself seems harmless."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1566.001",
+          "name": "Spearphishing Attachment",
+          "relation": "The same attachment-delivery channel used for direct malware/access compromise rather than pure information-gathering — the two are frequently indistinguishable until the payload or the ask reveals the objective."
+        }
+      ],
+      "hypothesis": {
+        "statement": "An inbound email from a first-time sender domain includes a form-style document or HTML attachment, and the recipient subsequently renders that attachment locally in a browser.",
+        "rationale": "Don't rely on attachment-scanning verdicts to scope this hunt -- by design, the file is frequently clean, so the first-time-sender-plus-form-style-content combination is the actual signal, not anything a sandbox would flag."
+      }
+    },
+    {
+      "id": "T1598.003",
+      "name": "Spearphishing Link",
+      "tactic": "TA0043",
+      "tactic_name": "Reconnaissance",
+      "platforms": ["PRE"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1598/003/",
+      "overview": "Adversaries send a link to a cloned login portal, betting that the target won't notice the URL doesn't quite match the real service — increasingly assisted by adversary-in-the-middle proxy kits like Evilginx2 and EvilProxy that relay the entire real login flow (MFA prompt included) while silently capturing the resulting session cookie, and by QR-code delivery (\"quishing\") that routes around email-security URL scanning entirely by putting the destination in an image instead of clickable text. This is the single richest sub-technique in the pack for real-world tooling sophistication, precisely because credential harvesting via a fake or proxied login page is the most scalable, most automatable version of phishing for information that exists.",
+      "concepts": [
+        {
+          "term": "Adversary-in-the-middle kits break the 'just check for a fake login page' assumption entirely",
+          "explanation": "Evilginx2 and EvilProxy don't build a static clone of a login page — they transparently proxy the victim's session to the real site, meaning the victim genuinely authenticates against the genuine service, MFA challenge and all, while the tool sits in the middle and captures the resulting session cookie. A defender looking for 'a fake page that doesn't quite match the real one' will find nothing, because from the browser's perspective every response actually did come from the legitimate site — the only anomaly is the proxy's own infrastructure sitting in between, which is why detection here increasingly relies on proxy-specific TLS/certificate fingerprints and unusual DNS resolution patterns rather than content inspection of the page itself."
+        },
+        {
+          "term": "Quishing exists specifically to defeat email link-scanning, not the human",
+          "explanation": "Every major email security gateway now expands and reputation-checks URLs found in message text or HTML — a QR code image containing that same URL is invisible to that exact scanning pipeline unless the gateway specifically decodes image content for embedded URLs, which most legacy deployments still don't do. Kimsuky's documented pivot to QR-code delivery in its spearphishing campaigns is a direct response to link-scanning maturity, not a coincidental tooling choice, and it shifts the phishing risk onto whatever device the victim uses to scan the code (frequently a personal phone entirely outside corporate mobile device management)."
+        },
+        {
+          "term": "Browser-in-the-Browser makes the address bar itself the lie",
+          "explanation": "A BitB attack renders a fake browser window, complete with a convincing fake address bar showing the legitimate URL, inside the actual browser tab the victim is already looking at — the one piece of UI security training has spent two decades telling users to trust (\"check the address bar\") is exactly the element being faked. This is worth calling out explicitly in any user-training program built around this sub-technique, since the standard advice stops working the moment BitB is in play."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Scattered Spider",
+          "activity": "Mirrored corporate login portals to socially engineer credential disclosure from targeted employees."
+        },
+        {
+          "actor": "Silent Librarian",
+          "activity": "Directed victims via email links to credential-harvesting websites designed to closely resemble the targeted organization's own login pages."
+        },
+        {
+          "actor": "Kimsuky",
+          "activity": "Employed links with embedded web beacons for target profiling, and more recently deployed QR codes in spearphishing campaigns to evade link scanning."
+        },
+        {
+          "actor": "Star Blizzard",
+          "activity": "Established rapport through benign correspondence before sending messages containing links to credential-stealing sites."
+        },
+        {
+          "actor": "Evilginx2",
+          "activity": "Generates phishing URLs using an adversary-in-the-middle reverse proxy, capturing session cookies while relaying a fully legitimate login flow to the victim."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Email gateway / URL-rewrite logs",
+          "detail": "Inbound messages containing links to newly-registered or lookalike domains, or containing image attachments where OCR/QR-decoding reveals an embedded URL the text-scanning pipeline never saw."
+        },
+        {
+          "source": "Proxy / web logs and TLS certificate telemetry",
+          "detail": "Connections to a domain whose TLS certificate or hosting infrastructure matches known adversary-in-the-middle proxy patterns rather than the legitimate service's own certificate chain."
+        },
+        {
+          "source": "Identity Provider sign-in logs",
+          "detail": "A completed, MFA-satisfied sign-in immediately followed by session activity from a second, geographically inconsistent IP address using the same session token — the signature of a captured AiTM session cookie being reused."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Same Session Token Used From Two Inconsistent Locations",
+          "description": "Surfaces a session token issued after a fully successful, MFA-satisfied sign-in being reused from a second location shortly after, consistent with an adversary-in-the-middle proxy capturing and replaying the session.",
+          "query": "SigninLogs\n| where ResultType == 0\n| where AuthenticationRequirement == \"multiFactorAuthentication\"\n| project TimeGenerated, UserPrincipalName, SessionId, IPAddress, Location=tostring(LocationDetails.city)\n| sort by SessionId, TimeGenerated asc\n| serialize\n| extend PrevLocation = prev(Location), PrevSession = prev(SessionId)\n| where SessionId == PrevSession and Location != PrevLocation\n| project UserPrincipalName, SessionId, TimeGenerated, Location, PrevLocation"
+        },
+        {
+          "language": "Sigma",
+          "title": "Inbound Email With Image Attachment Containing an Embedded QR Code Link",
+          "description": "Flags inbound messages carrying an image attachment decoded to contain a URL, the quishing evasion pattern for link-scanning gateways.",
+          "query": "title: QR Code Phishing Link in Email Attachment\nid: 5e8b3a9d-6f2c-4c7a-9d1e-8b4c9a3e6f70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: application\n  product: email_gateway\ndetection:\n  selection:\n    AttachmentType|in:\n      - 'image/png'\n      - 'image/jpeg'\n    DecodedQRPayload|exists: true\n  condition: selection\nfalsepositives:\n  - Legitimate business use of QR codes for event registration, payment, or marketing content distributed via email\nlevel: medium\ntags:\n  - attack.reconnaissance\n  - attack.t1598.003"
+        }
+      ],
+      "false_positives": [
+        "Legitimate marketing, event, or payment QR codes distributed via email as part of normal business communication",
+        "Corporate VPN or proxy egress changes producing apparent but false session-location anomalies"
+      ],
+      "response_steps": [
+        "Revoke the session token immediately if AiTM session capture is confirmed — a password reset alone does not invalidate an already-captured session cookie",
+        "Identify every recipient of the same link/QR code across the organization via email gateway click-tracking",
+        "Block the destination domain and any associated proxy infrastructure at the firewall and submit for reputation blacklisting",
+        "Review the compromised account's subsequent sign-in and mailbox activity for follow-on abuse using the captured session"
+      ],
+      "mitigations": [
+        {
+          "id": "M1054",
+          "name": "Software Configuration",
+          "detail": "Deploy SPF/DKIM/DMARC and browser-level IDN homograph protections; configure password managers to auto-fill only on exact legitimate domain matches, which defeats most static credential-harvesting clones."
+        },
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Train users specifically on QR-code phishing and adversary-in-the-middle/Browser-in-the-Browser patterns, since standard 'check the address bar' advice does not defend against either."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1566.002",
+          "name": "Spearphishing Link",
+          "relation": "The same link-delivery channel and often the same tooling (Evilginx2-style AiTM kits), used here to harvest information rather than deliver a payload or complete an initial-access compromise."
+        },
+        {
+          "id": "T1550.001",
+          "name": "Application Access Token",
+          "relation": "The direct payoff of a captured session cookie from an adversary-in-the-middle phishing kit — a token an attacker can replay without ever knowing the underlying password.",
+          "external": true
+        }
+      ],
+      "hypothesis": {
+        "statement": "A session token issued after a fully MFA-satisfied sign-in is used from a second IP address or geographic location shortly after the original sign-in, without an intervening sign-out.",
+        "rationale": "This hypothesis catches the AiTM-proxy outcome regardless of which specific phishing kit or lure delivered it -- anchoring detection to the session-reuse pattern rather than to any one tool's infrastructure is what keeps this hunt viable as the tooling landscape (Evilginx2 today, something else next year) keeps changing."
+      }
+    },
+    {
+      "id": "T1598.004",
+      "name": "Spearphishing Voice",
+      "tactic": "TA0043",
+      "tactic_name": "Reconnaissance",
+      "platforms": ["PRE"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1598/004/",
+      "overview": "Adversaries call a target directly — sometimes personally, sometimes through a hired call center or an automated robocall — impersonating IT support, a business partner, or a help desk, using a spoofed caller ID and information from prior reconnaissance to make the pretext convincing enough that the victim reads back a password, an MFA code, or authorizes a malicious application over the phone. LAPSUS$'s well-documented pattern of calling an organization's own help desk staff to talk them into resetting a privileged account's credentials shows this sub-technique's most dangerous variant: the social engineering doesn't have to succeed against the end user at all if it succeeds against whoever holds the reset button.",
+      "concepts": [
+        {
+          "term": "Callback phishing routes around every email-based control entirely",
+          "explanation": "Rather than asking the victim to click anything, a callback-phishing message (a fake invoice, a fake subscription renewal notice) simply provides a phone number and asks the recipient to call to resolve an issue — the entire malicious interaction happens over a voice channel that email security, URL scanning, and attachment sandboxing have zero visibility into. By the time a hunter would have any relevant telemetry at all, it's already sitting in call logs, not email logs, which means a security program built purely around inbox protection has a structural blind spot for this specific variant regardless of how well-tuned it is."
+        },
+        {
+          "term": "Targeting the help desk instead of the end user changes who needs the training",
+          "explanation": "LAPSUS$'s help-desk-targeting pattern succeeds by exploiting a support agent's incentive to be helpful and to resolve tickets quickly, not by exploiting an end user's naivety — the actual point of failure is a weak identity-verification step in the help desk's own password-reset procedure. That means security-awareness investment aimed only at general end users misses the highest-leverage target for this specific attack; the help desk staff themselves need training and a hardened, non-negotiable verification procedure that doesn't bend to social pressure or urgency."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Scattered Spider",
+          "activity": "Used phone calls to instruct victims to navigate to credential-harvesting websites, and conducted help-desk-focused voice phishing targeting employee login portals, sometimes paired with adversary-in-the-middle toolkits during the same call."
+        },
+        {
+          "actor": "LAPSUS$",
+          "activity": "Called victim organizations' help desk personnel directly, convincing support staff to reset privileged account credentials without proper identity verification."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Corporate device call logs",
+          "detail": "Inbound calls from numbers matching known malicious VoIP-spoofing patterns or previously reported vishing campaigns."
+        },
+        {
+          "source": "Help desk / ITSM ticketing system logs",
+          "detail": "Password reset or credential-disclosure requests initiated by phone without a documented, completed identity-verification step."
+        },
+        {
+          "source": "Identity Provider audit logs",
+          "detail": "A credential reset or MFA re-enrollment event immediately following a help-desk contact logged around the same time, with no corresponding verification record."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Credential Reset Following Help Desk Contact With No Verification Record",
+          "description": "Correlates a credential or MFA reset event with a recent help-desk ticket lacking a documented identity-verification step, the LAPSUS$-style help-desk social-engineering pattern.",
+          "query": "AuditLogs\n| where OperationName in (\"Reset password\", \"User registered security info\")\n| project TimeGenerated, TargetUser = tostring(TargetResources[0].userPrincipalName)\n| join kind=inner (\n    HelpDeskTickets\n    | where Category in (\"Password Reset\", \"MFA Reset\")\n    | where VerificationStepCompleted == false\n) on TargetUser\n| where TimeGenerated between (TicketOpenTime .. TicketOpenTime + 2h)\n| project TimeGenerated, TargetUser, TicketId, TicketOpenTime"
+        }
+      ],
+      "false_positives": [
+        "Legitimate help-desk-assisted password resets that did complete proper identity verification but whose ticketing-system record wasn't updated to reflect it",
+        "New-hire onboarding calls where IT-assisted credential setup is an expected, routine process"
+      ],
+      "response_steps": [
+        "Treat any credential or MFA detail disclosed during the call as compromised immediately and force a reset through a properly verified channel",
+        "Review the specific help-desk agent's handling of the call against documented verification procedure, and retrain or restrict reset authority pending review rather than treating it as solely the caller's fault",
+        "Add the caller ID or VoIP number pattern used to an internal indicator list and brief the help desk team on the active pretext",
+        "Check for any application authorization or OAuth consent granted during or immediately after the call, since some campaigns pair a voice call with a request to approve a malicious app"
+      ],
+      "mitigations": [
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Train both end users and help-desk/support staff specifically, since this sub-technique's most damaging variant targets the support function's own verification process rather than a general employee."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1566.004",
+          "name": "Spearphishing Voice",
+          "relation": "The same voice-call delivery channel used for direct account takeover or remote-access-tool installation rather than pure information gathering — frequently the same campaign's next phase."
+        },
+        {
+          "id": "T1078.004",
+          "name": "Cloud Accounts",
+          "relation": "The account tier most directly targeted when a help-desk-focused vishing call succeeds in obtaining a privileged credential reset."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A user's credential or MFA method is reset within two hours of a help-desk ticket categorized as a password or MFA reset that lacks a documented, completed identity-verification step.",
+        "rationale": "Pull the ticketing system's own verification-step field into the join condition rather than trusting ticket closure status alone -- a ticket marked resolved doesn't confirm the agent actually performed the callback or verification, and that gap is exactly what this hunt exists to catch."
+      }
+    }
+  ]
+}
