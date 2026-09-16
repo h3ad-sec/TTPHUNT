@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-15",
-  "count": 16,
+  "generated": "2026-09-16",
+  "count": 20,
   "techniques": [
     {
       "id": "T1003",
@@ -252,6 +252,63 @@
         { "id": "T1598.002", "name": "Spearphishing Attachment" },
         { "id": "T1598.003", "name": "Spearphishing Link" },
         { "id": "T1598.004", "name": "Spearphishing Voice" }
+      ]
+    },
+    {
+      "id": "T1547",
+      "name": "Boot or Logon Autostart Execution",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows", "Linux", "macOS", "Network Devices"],
+      "file": "techniques/T1547.json",
+      "subtechniques": [
+        { "id": "T1547.001", "name": "Registry Run Keys / Startup Folder" },
+        { "id": "T1547.002", "name": "Authentication Package" },
+        { "id": "T1547.003", "name": "Time Providers" },
+        { "id": "T1547.004", "name": "Winlogon Helper DLL" },
+        { "id": "T1547.005", "name": "Security Support Provider" },
+        { "id": "T1547.006", "name": "Kernel Modules and Extensions" },
+        { "id": "T1547.007", "name": "Re-opened Applications" },
+        { "id": "T1547.008", "name": "LSASS Driver" },
+        { "id": "T1547.009", "name": "Shortcut Modification" },
+        { "id": "T1547.010", "name": "Port Monitors" },
+        { "id": "T1547.012", "name": "Print Processors" },
+        { "id": "T1547.013", "name": "XDG Autostart Entries" },
+        { "id": "T1547.014", "name": "Active Setup" },
+        { "id": "T1547.015", "name": "Login Items" }
+      ]
+    },
+    {
+      "id": "T1018",
+      "name": "Remote System Discovery",
+      "tactic": "TA0007",
+      "tactic_name": "Discovery",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices"],
+      "file": "techniques/T1018.json",
+      "subtechniques": [
+        { "id": "T1018", "name": "Remote System Discovery" }
+      ]
+    },
+    {
+      "id": "T1105",
+      "name": "Ingress Tool Transfer",
+      "tactic": "TA0011",
+      "tactic_name": "Command and Control",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices"],
+      "file": "techniques/T1105.json",
+      "subtechniques": [
+        { "id": "T1105", "name": "Ingress Tool Transfer" }
+      ]
+    },
+    {
+      "id": "T1190",
+      "name": "Exploit Public-Facing Application",
+      "tactic": "TA0001",
+      "tactic_name": "Initial Access",
+      "platforms": ["Windows", "Linux", "macOS", "Containers", "ESXi", "IaaS", "Network Devices"],
+      "file": "techniques/T1190.json",
+      "subtechniques": [
+        { "id": "T1190", "name": "Exploit Public-Facing Application" }
       ]
     }
   ]

@@ -1,0 +1,1195 @@
+{
+  "id": "T1547",
+  "name": "Boot or Logon Autostart Execution",
+  "tactic": "TA0003",
+  "tactic_name": "Persistence",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "Network Devices"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1547/",
+  "overview": "Every operating system provides a way to run something automatically at boot or logon — that's the entire feature this technique family abuses, fourteen different ways. Registry Run keys, Winlogon helper values, authentication packages, kernel modules, print processors, macOS login items: each one is a legitimate hook the OS itself calls at a predictable moment, and each one is functionally invisible to a user unless they know exactly where to look. This is far and away the most common persistence technique in the entire ATT&CK framework by sheer volume of documented malware — nearly every commodity trojan, ransomware family, and APT toolkit referenced anywhere else in this tool shows up again here, because after the initial compromise, everyone needs the same thing: survive a reboot. The fourteen sub-techniques below split by exactly which OS hook gets abused, because each one lives in a different location, requires a different privilege level, and leaves a completely different forensic trail.",
+  "prerequisite_concepts": [
+    {
+      "term": "This is the technique every other pack in TTPHUNT eventually leads to",
+      "explanation": "A credential dump, a phishing foothold, a web-shell from an exploited application — none of it survives a reboot on its own. Somewhere in nearly every real intrusion chain this tool covers, the adversary has to convert a temporary foothold into something that starts itself again, and the fourteen mechanisms below are the most common ways that conversion happens. That's why this pack has one of the highest-volume procedure-example lists in the entire tool: APT28, APT29, APT41, Lazarus, Wizard Spider, FIN7, and dozens of ransomware families all show up repeatedly across different sub-techniques, because this is genuinely universal tradecraft, not a specialty."
+    },
+    {
+      "term": "Most of this pack has no real preventive fix, on purpose",
+      "explanation": "You cannot disable the Windows Registry Run key mechanism, or Winlogon, or the print spooler's driver-loading mechanism, without breaking normal operating system function for every legitimate application that also relies on it — MITRE says as much directly for several of these sub-techniques ('cannot be easily mitigated with preventive controls since it is based on the abuse of system features'). That's why this pack, more than almost any other in TTPHUNT, lives or dies on detection: baselining what's normally in these locations and alerting on deviation, since blocking the mechanism itself isn't a real option."
+    },
+    {
+      "term": "Location determines privilege, and privilege determines blast radius",
+      "explanation": "The same technique category can run as the logged-on user (a value under HKCU) or as SYSTEM (a value under HKLM, or a driver loaded by a privileged service like the print spooler or LSA) — the registry hive or file location an adversary chooses isn't arbitrary, it's a direct statement about what privilege level they're trying to persist at. A hunter scanning these locations should weight HKLM-scoped and service-loaded findings far more urgently than HKCU-scoped ones, since the former usually means the adversary already had or was going for SYSTEM-equivalent access."
+    },
+    {
+      "term": "LSA/LSASS-adjacent sub-techniques do double duty with T1003",
+      "explanation": "Authentication Package, Security Support Provider, and LSASS Driver all place a malicious DLL somewhere the LSA process loads it — the same process TTPHUNT's T1003.001 pack covers for credential dumping. An adversary who persists this way isn't just surviving a reboot, they're also getting a standing position inside the exact process that holds plaintext and hashed credentials in memory, which is why LSA Protected Process Light (PPL) shows up as the dominant mitigation across three separate sub-techniques below — it's the same control doing double duty against both this pack and T1003.001."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1547.001",
+      "name": "Registry Run Keys / Startup Folder",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/001/",
+      "overview": "The single most common persistence mechanism in this entire tool: a value under HKCU\\...\\Run (or HKLM for machine-wide, or RunOnce for one-shot) that Windows executes at every logon, or a shortcut/executable dropped straight into the Startup folder. Practically every threat actor and malware family referenced anywhere in TTPHUNT shows up in this sub-technique's procedure list — APT28 through APT41, Emotet, TrickBot, Ryuk, LockBit, Qilin — because it requires no special privilege beyond what the malware already has, works identically across every supported Windows version, and is trivial to implement in a single registry write or file copy.",
+      "concepts": [
+        {
+          "term": "RunOnce is the quieter, self-cleaning variant",
+          "explanation": "Unlike the persistent Run key, RunOnce entries delete themselves automatically after firing once, which means a hunt that only diffs the Run key against a historical baseline can completely miss a RunOnce-based technique that already executed and cleaned up after itself — the entry is simply gone by the time anyone looks. This is exactly why the detection queries below correlate the registry write itself, in near-real-time, with the process execution that follows, rather than relying purely on a point-in-time snapshot comparison."
+        },
+        {
+          "term": "The startup folder path is a plain filesystem location, not a hidden registry key",
+          "explanation": "Anyone with write access to a user's Startup folder (or the all-users equivalent under ProgramData) can drop a file there with zero registry interaction at all, which means file-integrity monitoring on that specific folder path is just as important a data source for this sub-technique as registry monitoring — a hunt program that only watches the Run keys and ignores the Startup folder is only covering half of what MITRE itself groups as one sub-technique."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Emotet",
+          "activity": "Added its downloaded payload to the HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run key."
+        },
+        {
+          "actor": "Wizard Spider",
+          "activity": "Established persistence via HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run."
+        },
+        {
+          "actor": "Ryuk, LockBit 2.0, AvosLocker, and Qilin",
+          "activity": "Deployed via RunOnce registry keys as part of their ransomware persistence routines."
+        },
+        {
+          "actor": "TrickBot",
+          "activity": "Established persistence by placing a copy of itself in the Startup folder."
+        },
+        {
+          "actor": "MuddyWater",
+          "activity": "Configured a Registry run key under a disguised name (SystemTextEncoding) to blend in with legitimate entries."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon 13 (Registry Value Set)",
+          "detail": "Writes to any Run, RunOnce, RunOnceEx, or policy-based run key, especially referencing a binary in a temporary, user-writable, or non-standard directory."
+        },
+        {
+          "source": "Sysmon 11 (File Create)",
+          "detail": "New executable or shortcut file created in the user or all-users Startup folder path."
+        },
+        {
+          "source": "Sysmon 1 (Process Create)",
+          "detail": "Process execution at logon whose parent is explorer.exe or userinit.exe and whose image path matches a recently-written Run key or Startup folder entry."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Run Key Set to Non-Standard Binary Path",
+          "description": "Flags new or modified Run/RunOnce registry values pointing to a binary outside Program Files or the Windows directory.",
+          "query": "title: Suspicious Run Key Pointing to Non-Standard Path\nid: 4c8d7a3e-6f9b-4c2a-9d1e-6b4c9a8f3d70\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: registry_set\n  product: windows\ndetection:\n  selection:\n    TargetObject|contains:\n      - '\\Run\\'\n      - '\\RunOnce\\'\n  filter_known_path:\n    Details|contains:\n      - 'C:\\\\Program Files'\n      - 'C:\\\\Windows\\\\'\n  condition: selection and not filter_known_path\nfalsepositives:\n  - Legitimate third-party software that installs to a user-profile-relative path rather than Program Files\nlevel: high\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.001"
+        },
+        {
+          "language": "KQL",
+          "title": "Executable Created in Startup Folder",
+          "description": "Flags new executable or shortcut file creation in the user or all-users Startup folder path.",
+          "query": "DeviceFileEvents\n| where FolderPath has_any (@\"\\Start Menu\\Programs\\Startup\", @\"\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\")\n| where FileName endswith \".exe\" or FileName endswith \".lnk\" or FileName endswith \".vbs\"\n| project Timestamp, DeviceName, FolderPath, FileName, InitiatingProcessAccountName\n| order by Timestamp desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate software that installs to a user-profile-relative or non-Program-Files path, particularly some update mechanisms and portable applications",
+        "IT-deployed logon scripts or startup shortcuts distributed via Group Policy or a software deployment tool"
+      ],
+      "response_steps": [
+        "Identify the referenced binary or script and determine whether it's already been executed at least once since the entry was created",
+        "Remove the Run key value or Startup folder file, and check for the same entry across other hosts if deployed via a shared script or GPO",
+        "Since RunOnce entries self-delete, check process-execution history even if the registry key is no longer present",
+        "Treat any HKLM-scoped (machine-wide) entry as higher priority than an HKCU-scoped one, since it implies the adversary already had or was targeting SYSTEM-level access"
+      ],
+      "mitigations": [
+        {
+          "id": "M1047",
+          "name": "Audit",
+          "detail": "Regularly baseline and review Run/RunOnce registry values and Startup folder contents against known-good software inventory."
+        },
+        {
+          "id": "M1038",
+          "name": "Execution Prevention",
+          "detail": "Apply application control to restrict which binaries may execute from Run keys or Startup folder locations."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1055.001",
+          "name": "Dynamic-link Library Injection",
+          "relation": "A Run-key entry frequently points to a loader whose actual purpose is to inject a payload into a separate process, rather than running the malicious code directly."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A Run, RunOnce, or Startup-folder entry references a binary or script located outside Program Files or the Windows directory, on a host with no corresponding approved software deployment record.",
+        "rationale": "Correlate the registry write with subsequent process execution rather than relying on a snapshot diff alone -- RunOnce entries delete themselves after firing, so a hunt that only compares registry state at two points in time will miss exactly the self-cleaning variant of this technique."
+      }
+    },
+    {
+      "id": "T1547.002",
+      "name": "Authentication Package",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/002/",
+      "overview": "Windows loads every DLL listed under HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa's \"Authentication Packages\" value directly into the LSA process at boot, before any user ever logs on — an adversary who adds their own DLL to that list gets it running with LSA's privileges every single time the machine starts, with no logon event or user interaction required at all. Flame's use of this exact mechanism in one of the most sophisticated nation-state malware campaigns ever documented shows this isn't a theoretical corner case; it's a proven technique for extremely high-value, long-term persistence.",
+      "concepts": [
+        {
+          "term": "Boot-time execution with no logon required is the whole point",
+          "explanation": "Unlike Run keys, which need a user to actually log on to fire, an authentication package loads the moment LSA itself initializes during system boot — meaning this persistence mechanism survives on a server that nobody ever interactively logs into, and fires even if the malware's original delivery account never authenticates to the box again. That makes it disproportionately attractive for persistence on infrastructure (domain controllers, servers) rather than end-user workstations, where a logon-triggered mechanism would be sufficient."
+        },
+        {
+          "term": "LSA PPL is the one control that actually closes this door",
+          "explanation": "Enabling LSA Protected Process Light via the RunAsPPL registry value forces every DLL loaded into LSA, including authentication packages, to carry a valid Microsoft signature — an adversary's custom-built DLL simply fails to load at all, full stop, rather than being merely harder to plant. This is one of the few sub-techniques in this entire pack where a single, well-documented setting provides a genuine technical floor rather than just raising detection odds."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Flame",
+          "activity": "Used Windows Authentication Packages for persistence as part of a sophisticated, long-running espionage campaign targeting critical infrastructure and government entities."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Registry monitoring on HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa",
+          "detail": "Writes to the 'Authentication Packages' value adding a new, unrecognized DLL name, outside a documented security-software installation window."
+        },
+        {
+          "source": "LSASS module load telemetry",
+          "detail": "An unsigned or non-standard DLL loading into lsass.exe at boot, correlated against a baseline of expected authentication packages."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "New Authentication Package Registered",
+          "description": "Flags writes to the LSA Authentication Packages registry value introducing a DLL not present in the established baseline.",
+          "query": "title: LSA Authentication Package Modified\nid: 7d3a9c6e-4f8b-4c2a-9d1e-6f3c9a8d4e70\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: registry_set\n  product: windows\ndetection:\n  selection:\n    TargetObject|endswith: '\\Lsa\\Authentication Packages'\n  condition: selection\nfalsepositives:\n  - Legitimate security software (some enterprise SSO or smart-card products) that registers its own authentication package during installation\nlevel: high\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.002"
+        }
+      ],
+      "false_positives": [
+        "Legitimate enterprise SSO, smart-card, or biometric authentication software that registers its own authentication package during installation"
+      ],
+      "response_steps": [
+        "Identify the added DLL and pull it for analysis before removing the registry reference",
+        "Reboot the host after remediation, since the malicious package is already loaded into the running LSA process and won't unload until restart",
+        "Enable LSA PPL if not already enforced, to prevent recurrence",
+        "Audit domain controllers and infrastructure servers specifically, since this technique doesn't require an interactive logon and is disproportionately effective there"
+      ],
+      "mitigations": [
+        {
+          "id": "M1025",
+          "name": "Privileged Process Integrity",
+          "detail": "Enable LSA Protected Process Light (RunAsPPL) on Windows 8.1/Server 2012 R2 and later to require Microsoft-signed authentication package DLLs."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1003.001",
+          "name": "LSASS Memory",
+          "relation": "A malicious authentication package runs inside the same LSA process this pack's credential-dumping content targets, giving the adversary a standing position to harvest credentials directly."
+        }
+      ],
+      "hypothesis": {
+        "statement": "The LSA Authentication Packages registry value is modified to add a DLL not present in the environment's authentication-package baseline.",
+        "rationale": "Build the baseline before deploying this hunt -- enterprise SSO and smart-card products legitimately register their own packages, and without an accurate baseline this alert will fire on every such product rather than the rare malicious addition."
+      }
+    },
+    {
+      "id": "T1547.003",
+      "name": "Time Providers",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/003/",
+      "overview": "The Windows Time service (W32Time) loads DLLs registered under its TimeProviders registry subkey to handle clock synchronization, and the service control manager loads every registered provider automatically at boot — an adversary who registers their own subkey pointing at a malicious DLL gets it loaded every time the machine starts, running in the context of the Local Service account. It's an obscure enough corner of Windows that this sub-technique carries no widely-documented real-world procedure example in current threat intelligence, making it a case where hunting for the mechanism itself (rather than known indicators) is the only realistic approach.",
+      "concepts": [
+        {
+          "term": "Obscurity is the actual defense mechanism attackers are counting on here",
+          "explanation": "W32Time's TimeProviders subkey is one of the least-monitored autostart locations in Windows precisely because almost nobody looks there — most persistence-hunting checklists cover Run keys, services, and scheduled tasks long before they'd think to check time-synchronization provider registration, which is exactly the kind of security-through-obscurity gap a patient adversary can exploit for a long time before anyone notices."
+          },
+        {
+          "term": "Local Service context is a meaningful but limited privilege level",
+          "explanation": "Unlike SYSTEM-level persistence mechanisms elsewhere in this pack, a malicious time provider runs as Local Service — a genuinely restricted account with far fewer rights than SYSTEM or even a local administrator. That doesn't make this technique low-value to an adversary (it still survives reboots with no user interaction), but it does mean a hunter who finds this specific technique should expect it to be paired with a separate privilege-escalation step elsewhere, not treat it as evidence of full SYSTEM compromise on its own."
+        }
+      ],
+      "procedure_examples": [],
+      "data_sources": [
+        {
+          "source": "Registry monitoring on W32Time\\TimeProviders",
+          "detail": "New subkeys created under HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\ referencing a DLL outside the small set of default Windows time providers."
+        },
+        {
+          "source": "Process/module load telemetry",
+          "detail": "A new DLL written to disk shortly before or after the registry key is created, followed by a Local Service-context process loading it at boot."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "New Time Provider Registered",
+          "description": "Flags creation of a new subkey under the W32Time TimeProviders registry path referencing a non-default DLL.",
+          "query": "title: New W32Time Provider Registered\nid: 9f4c7a3d-6e8b-4c2a-9d1e-7f3c9a6d4e80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: registry_add\n  product: windows\ndetection:\n  selection:\n    TargetObject|contains: '\\W32Time\\TimeProviders\\'\n  filter_known:\n    TargetObject|endswith:\n      - 'NtpClient'\n      - 'NtpServer'\n      - 'VMICTimeProvider'\n  condition: selection and not filter_known\nfalsepositives:\n  - Legitimate hardware time-synchronization software (GPS clock appliances, specialized NTP hardware) that registers its own provider\nlevel: high\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.003"
+        }
+      ],
+      "false_positives": [
+        "Legitimate hardware time-synchronization software, such as GPS clock appliances or specialized NTP hardware integrations, that registers its own time provider"
+      ],
+      "response_steps": [
+        "Identify and remove the malicious subkey and its referenced DLL",
+        "Reboot the host to ensure the already-loaded provider is unloaded, since removing the registry key alone doesn't unload an active DLL",
+        "Audit for administrator-level compromise on the host, since registering a time provider requires admin rights even though execution runs as Local Service",
+        "Check the host for evidence of a separate privilege-escalation attempt, since Local Service is a restricted context an adversary likely wants to escalate from"
+      ],
+      "mitigations": [
+        {
+          "id": "M1022",
+          "name": "Restrict File and Directory Permissions",
+          "detail": "Use Group Policy to block additions or modifications to files in the W32Time provider directory."
+        },
+        {
+          "id": "M1024",
+          "name": "Restrict Registry Permissions",
+          "detail": "Implement Group Policy controls preventing unauthorized modification of W32Time registry parameters."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1547.004",
+          "name": "Winlogon Helper DLL",
+          "relation": "Both are examples of registering a DLL under an obscure, rarely-audited registry path that a Windows service loads automatically at boot."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A new subkey appears under HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\TimeProviders\\ referencing a DLL outside the default set of Windows-provided time providers.",
+        "rationale": "Given how rarely this location is monitored anywhere, treat any non-default entry as worth investigating regardless of confidence -- the absence of real-world procedure examples in current threat intelligence more likely reflects under-hunting of this location than genuine rarity of the technique."
+      }
+    },
+    {
+      "id": "T1547.004",
+      "name": "Winlogon Helper DLL",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/004/",
+      "overview": "Winlogon.exe handles the logon process itself, and three of its registry values — Shell, Userinit, and Notify — each control what executes at logon; an adversary who appends their own path to the Shell or Userinit value, or registers a malicious notification-package DLL, gets code execution at every single interactive logon on the machine. This is one of the most widely and consistently used sub-techniques in this entire pack, with LockBit 3.0, Qilin, Wizard Spider, Turla, and a dozen other named actors all appearing in its procedure examples, spanning commodity ransomware through nation-state espionage.",
+      "concepts": [
+        {
+          "term": "Appending, not replacing, is what makes this quiet",
+          "explanation": "The Shell value's expected content is exactly explorer.exe — but Windows will happily execute a comma-separated list, so an adversary appending \",%malware_path%\" after the legitimate value keeps explorer.exe launching normally (nothing visibly breaks for the user) while quietly adding their own execution alongside it. A hunt that only checks 'is the Shell value explorer.exe' rather than 'does the Shell value contain anything besides explorer.exe' will miss this exact, very commonly used variant."
+        },
+        {
+          "term": "HKLM versus HKCU changes both privilege and blast radius",
+          "explanation": "A Winlogon value set under HKCU only affects the specific user whose hive it lives in and runs with that user's own privileges, while the same value under HKLM applies machine-wide and can run with elevated privileges depending on configuration — Wizard Spider's and Remexi's documented use of the HKLM-scoped Userinit path specifically, rather than the HKCU equivalent, reflects a deliberate choice to persist against every user of the machine rather than just one account."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Wizard Spider",
+          "activity": "Established persistence using the Userinit value under the HKLM-scoped Winlogon registry key, affecting every user of the machine."
+        },
+        {
+          "actor": "LockBit 3.0",
+          "activity": "Enabled automatic logon and abused a Winlogon registry key as part of its ransomware deployment routine."
+        },
+        {
+          "actor": "Turla",
+          "activity": "Added its own value under the Shell key at HKCU\\...\\Winlogon to execute alongside explorer.exe."
+        },
+        {
+          "actor": "Gazer",
+          "activity": "Set the Shell value to 'explorer.exe, %malware_pathfile%', appending its own execution to the legitimate shell launch."
+        },
+        {
+          "actor": "Qilin",
+          "activity": "Configured a Winlogon registry entry as part of its ransomware persistence mechanism."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon 13 (Registry Value Set)",
+          "detail": "Modifications to the Shell, Userinit, or Notify values under Winlogon in either HKLM or HKCU, especially where the resulting value contains more than the single expected legitimate binary."
+        },
+        {
+          "source": "Sysmon 7 (Image Load)",
+          "detail": "A DLL loading via the Notify mechanism that isn't part of the known-good notification package baseline."
+        },
+        {
+          "source": "Sysmon 1 (Process Create)",
+          "detail": "A process other than explorer.exe or userinit.exe spawning immediately at logon, with winlogon.exe or userinit.exe in its parent chain."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Winlogon Shell or Userinit Value Contains Unexpected Entry",
+          "description": "Flags the Shell or Userinit registry value under Winlogon containing anything beyond the single expected legitimate binary (explorer.exe or userinit.exe).",
+          "query": "title: Winlogon Shell-Userinit Tampering\nid: 6e9d3a7c-8f4b-4c2a-9d1e-6f8c9a3d4e90\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: registry_set\n  product: windows\ndetection:\n  selection_shell:\n    TargetObject|endswith: '\\Winlogon\\Shell'\n  selection_userinit:\n    TargetObject|endswith: '\\Winlogon\\Userinit'\n  filter_shell_clean:\n    Details: 'explorer.exe'\n  filter_userinit_clean:\n    Details|endswith: 'userinit.exe,'\n  condition: (selection_shell and not filter_shell_clean) or (selection_userinit and not filter_userinit_clean)\nfalsepositives:\n  - Legitimate alternate shell software (some kiosk-mode or accessibility products) that deliberately replaces explorer.exe\nlevel: high\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.004"
+        }
+      ],
+      "false_positives": [
+        "Legitimate alternate-shell software, kiosk-mode configurations, or accessibility products that deliberately replace or extend the default explorer.exe shell",
+        "IT-managed automatic logon configurations set up for specific kiosk or lab-machine use cases"
+      ],
+      "response_steps": [
+        "Restore the Shell/Userinit value to its clean, expected content and remove the appended malicious entry",
+        "Identify and analyze the referenced binary before deletion, since it will execute again at the next logon if not fully removed",
+        "Check whether the modification was made under HKLM (machine-wide) or HKCU (single-user) to scope the true blast radius",
+        "Reboot or force a logoff/logon cycle to confirm the fix, since the malicious process may already be running from the current session"
+      ],
+      "mitigations": [
+        {
+          "id": "M1038",
+          "name": "Execution Prevention",
+          "detail": "Deploy application control (AppLocker or equivalent) to audit or block unknown DLLs and executables invoked through Winlogon."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict administrator privileges and limit which accounts can modify Winlogon-related registry settings."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1547.009",
+          "name": "Shortcut Modification",
+          "relation": "Both achieve logon-time execution through a Windows-native mechanism rather than a scheduled task or service, and are frequently used interchangeably by the same malware families."
+        }
+      ],
+      "hypothesis": {
+        "statement": "The Shell or Userinit registry value under Winlogon (HKLM or HKCU) contains any content beyond the single expected legitimate binary path.",
+        "rationale": "Check for appended content specifically, not just a wholesale value replacement -- the appending pattern (explorer.exe plus a malicious addition) is the dominant real-world variant and is exactly what a naive 'does the value equal explorer.exe' check will miss."
+      }
+    },
+    {
+      "id": "T1547.005",
+      "name": "Security Support Provider",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/005/",
+      "overview": "Security Support Providers (SSPs) are DLLs Windows loads into LSA at boot to handle authentication protocols, and — just like the Authentication Package sub-technique — an adversary who registers their own SSP under the Security Packages registry value gets a DLL loaded directly into the same process that holds live credential material in memory. Mimikatz itself ships a built-in SSP implementation, and PowerSploit's purpose-built Install-SSP module means an adversary doesn't need custom tooling to execute this technique at all — it's a documented, off-the-shelf capability in two of the most widely used offensive security frameworks in existence.",
+      "concepts": [
+        {
+          "term": "This is a credential-logging mechanism as much as a persistence one",
+          "explanation": "A custom SSP registered as described here doesn't just survive reboots — because it runs inside LSA, it can passively log every plaintext credential and Kerberos ticket that ever authenticates through the machine going forward, functioning as a standing credential-harvesting implant rather than a one-time dump like T1003.001. That dual purpose (persistence plus continuous credential logging) is exactly why Empire's documented workflow pairs Install-SSP with Invoke-Mimikatz in the same operation — the SSP registration is the delivery mechanism for an ongoing collection capability, not an end in itself."
+        },
+        {
+          "term": "Two nearly identical registry locations both need checking",
+          "explanation": "Security Packages can be registered under either the base Lsa key or its OSConfig subkey, and the two aren't automatically synchronized — a hunt or a manual review that only checks one location can miss an entry planted in the other, which is exactly the kind of narrow, easy-to-overlook detail that makes this sub-technique worth double-checking against both paths every time."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Empire",
+          "activity": "Enumerates existing SSPs and deploys malicious ones using PowerSploit's Install-SSP module, frequently paired with Invoke-Mimikatz for ongoing credential logging."
+        },
+        {
+          "actor": "Mimikatz",
+          "activity": "Contains its own built-in Security Support Provider implementation specifically for credential harvesting via LSA."
+        },
+        {
+          "actor": "PowerSploit",
+          "activity": "Provides the Install-SSP persistence module, enabling adversaries to register malicious SSP DLLs without custom development."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Registry monitoring on HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa",
+          "detail": "Writes to either the base 'Security Packages' value or its OSConfig subkey equivalent, adding an unrecognized DLL."
+        },
+        {
+          "source": "LSASS module load telemetry",
+          "detail": "An unsigned or non-standard DLL loading into lsass.exe, ideally correlated with the registry write that preceded it."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "New Security Package Registered",
+          "description": "Flags writes to either LSA Security Packages location introducing a DLL not present in the established baseline.",
+          "query": "title: LSA Security Package Modified\nid: 8c3f6a9d-4e7b-4c2a-9d1e-8f3c9a6d4e10\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: registry_set\n  product: windows\ndetection:\n  selection:\n    TargetObject|endswith:\n      - '\\Lsa\\Security Packages'\n      - '\\Lsa\\OSConfig\\Security Packages'\n  condition: selection\nfalsepositives:\n  - Legitimate enterprise security or SSO software that registers a custom Security Support Provider as part of its own authentication integration\nlevel: high\ntags:\n  - attack.persistence\n  - attack.credential_access\n  - attack.t1547.005"
+        }
+      ],
+      "false_positives": [
+        "Legitimate enterprise SSO or specialized authentication software that registers its own SSP as part of a documented integration"
+      ],
+      "response_steps": [
+        "Treat this as an active credential-logging incident, not just a persistence finding — assume every credential that has authenticated to the host since the SSP was registered is compromised",
+        "Pull the malicious DLL for analysis before removal",
+        "Enable LSA PPL to prevent recurrence, and reboot to clear the currently-loaded malicious module",
+        "Force a credential reset for every account that has interactively or remotely authenticated to the affected host during the exposure window"
+      ],
+      "mitigations": [
+        {
+          "id": "M1025",
+          "name": "Privileged Process Integrity",
+          "detail": "Enable LSA Protected Process Light (RunAsPPL) to require Microsoft-signed SSP DLLs, blocking unsigned custom implementations from loading at all."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1003.001",
+          "name": "LSASS Memory",
+          "relation": "A malicious SSP is a standing, ongoing version of what a one-time LSASS memory dump captures, since it runs inside the same process and can log credentials continuously rather than in a single snapshot."
+        }
+      ],
+      "hypothesis": {
+        "statement": "The LSA Security Packages value or its OSConfig subkey equivalent is modified to add a DLL not present in the environment's SSP baseline.",
+        "rationale": "Treat any confirmed hit here as a credential-compromise incident from the moment of registration, not just from the moment of discovery -- the whole point of this technique is silent, ongoing credential capture, so the exposure window is everything between registration and discovery, not just the discovery event itself."
+      }
+    },
+    {
+      "id": "T1547.006",
+      "name": "Kernel Modules and Extensions",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Linux", "macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/006/",
+      "overview": "Loadable Kernel Modules on Linux and kernel extensions (kexts) on macOS run at the highest privilege ring the OS offers, and a module configured to load at boot gives an adversary a rootkit with the ability to hide processes, files, and network connections from every userspace tool a hunter would normally rely on. Skidmap's use of multiple LKMs specifically to conceal its cryptomining payload, and REPTILE's implementation as a full LKM-based rootkit, both illustrate why this sub-technique is disproportionately dangerous relative to the others in this pack: a successful kernel-mode rootkit can make every other detection query in this entire tool return false-clean results on the same host.",
+      "concepts": [
+        {
+          "term": "Ring 0 access means userspace detection can be structurally blind",
+          "explanation": "Every detection technique elsewhere in TTPHUNT ultimately relies on some userspace tool or kernel-provided interface (ps, netstat, auditd, EDR agents) faithfully reporting what's actually happening — a kernel module that hooks those same interfaces can simply lie to all of them simultaneously, hiding its own process, files, and network connections from every tool that would otherwise report them. This is why kernel-module hunting fundamentally cannot rely purely on the compromised host's own userspace telemetry; it needs either an independent out-of-band data source (network taps, a hypervisor-level view for virtualized hosts) or specialized kernel-integrity tooling that doesn't trust the potentially-compromised kernel's own APIs."
+        },
+        {
+          "term": "macOS deprecated the kext model specifically because of this risk",
+          "explanation": "Apple began deprecating third-party kernel extensions starting with Catalina (10.15) in favor of System Extensions, which run in userspace with narrower, more auditable capabilities specifically to reduce the blast radius a single vulnerable or malicious extension can have — but legacy kexts remain permitted wherever no System Extension equivalent exists yet, which means this sub-technique's macOS variant is a shrinking but not yet closed attack surface, worth checking on any Mac that still has legacy kext-loading enabled."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Drovorub",
+          "activity": "Establishes persistence via a kernel module as part of a documented Linux-targeting espionage toolkit."
+        },
+        {
+          "actor": "Operation CuckooBees",
+          "activity": "Deployed a signed kernel rootkit as an additional persistence mechanism, using a legitimately signed driver to bypass kernel-mode signing enforcement."
+        },
+        {
+          "actor": "REPTILE",
+          "activity": "Implemented as a Loadable Kernel Module rootkit targeting Linux systems."
+        },
+        {
+          "actor": "Skidmap",
+          "activity": "Installs multiple LKMs specifically to hide its cryptocurrency-mining payload from process and resource-usage monitoring."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "auditd (Linux)",
+          "detail": "modprobe, insmod, or rmmod invocations, or direct manipulation of files under /lib/modules, correlated with kernel header installation or .ko file downloads."
+        },
+        {
+          "source": "Kernel module signature verification",
+          "detail": "Unsigned kernel module load attempts, or repeated load attempts by a non-root user (which should always fail but is worth alerting on as reconnaissance)."
+        },
+        {
+          "source": "macOS system logs",
+          "detail": "kextload command execution, /Library/Extensions modifications, KextPolicy database changes, or SIP-disablement attempts, which are a prerequisite for many legacy kext-loading scenarios."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "auditd",
+          "title": "Kernel Module Load/Unload Activity",
+          "description": "Base auditd rule capturing insmod/rmmod/modprobe execution for correlation against expected maintenance windows.",
+          "query": "auditctl -a always,exit -F arch=b64 -S init_module -S delete_module -F key=kernel_module_activity"
+        },
+        {
+          "language": "Sigma",
+          "title": "Unsigned Kernel Module Load Attempt",
+          "description": "Flags a kernel module load event where the module fails or bypasses signature verification, a strong indicator given how rare legitimate unsigned modules are on a hardened host.",
+          "query": "title: Unsigned Kernel Module Load\nid: 3a8d6c9e-7f4b-4c2a-9d1e-7f3c9a8d6e40\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  product: linux\n  service: kernel\ndetection:\n  selection:\n    - 'module verification failed'\n    - 'loading of unsigned module'\n  condition: selection\nfalsepositives:\n  - A legitimate but unsigned third-party driver on a system not configured to enforce strict module signing\nlevel: critical\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.006"
+        }
+      ],
+      "false_positives": [
+        "Legitimate but unsigned third-party hardware drivers on systems not configured to strictly enforce kernel module signing",
+        "Development or research systems intentionally loading custom kernel modules as part of their normal function"
+      ],
+      "response_steps": [
+        "Treat a confirmed malicious kernel module as a full-host compromise at the highest privilege level available — do not trust any userspace tool's output on that host going forward",
+        "Prefer full reimaging over in-place remediation, since a Ring-0 rootkit can persist through almost any userspace-level cleanup attempt",
+        "If forensic analysis is required, use an out-of-band method (booting from external media, memory imaging from a hypervisor level) rather than tools running on the potentially-compromised kernel",
+        "Enforce module signing (SecureBoot-linked kernel lockdown mode on Linux, or blocking legacy kext loading on macOS) before returning the host to production"
+      ],
+      "mitigations": [
+        {
+          "id": "M1038",
+          "name": "Execution Prevention",
+          "detail": "Apply SELinux, the Kernel Self-Protection Project (KSPP) hardening options, grsecurity MODHARDEN, or equivalent kernel-tuning controls to restrict which modules can load."
+        },
+        {
+          "id": "M1026",
+          "name": "Privileged Account Management",
+          "detail": "Limit root access, since loading a kernel module or kext fundamentally requires root/administrator privileges."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Use MDM policy to disable third-party kernel extension installation on managed macOS fleets."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1055.008",
+          "name": "Ptrace System Calls",
+          "relation": "Both require root on Linux, but a kernel module operates at a fundamentally higher privilege ring than anything ptrace-based, making it a much harder compromise to fully remediate."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A kernel module load attempt fails or bypasses signature verification on a host configured to enforce strict module signing, or root loads a module with no corresponding change-management record.",
+        "rationale": "Given how completely a successful kernel-mode rootkit can compromise the reliability of every other data source on the same host, treat this hunt as one of the very few in this entire tool where a single confirmed hit should trigger full reimaging by default, rather than attempted in-place remediation."
+      }
+    },
+    {
+      "id": "T1547.007",
+      "name": "Re-opened Applications",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/007/",
+      "overview": "macOS offers to reopen whatever applications were running the last time a user logged out, storing that list of application paths in a per-user plist file — an adversary who edits that plist to include their own application path gets it launched automatically the next time the user logs back in, entirely riding a convenience feature most users have never consciously configured but frequently leave enabled by default.",
+      "concepts": [
+        {
+          "term": "This targets a feature most users don't know they've enabled",
+          "explanation": "\"Reopen windows when logging back in\" is often a default-on checkbox in the macOS logout/restart dialog that many users click through without reading, meaning the underlying persistence mechanism this sub-technique abuses is frequently active on a machine without the user ever having deliberately chosen it — which is exactly why disabling the feature outright (rather than relying on user awareness) is the primary mitigation MITRE documents for it."
+        },
+        {
+          "term": "Holding Shift at login is a real, if fragile, user-level defense",
+          "explanation": "macOS explicitly supports holding the Shift key during login specifically to suppress the automatic reopening of prior applications for that one session — a genuinely useful piece of incident-response advice for a user who suspects something is wrong, though it only prevents that specific login's reopening rather than removing the malicious entry from the underlying plist file, which still needs to be found and cleaned separately."
+        }
+      ],
+      "procedure_examples": [],
+      "data_sources": [
+        {
+          "source": "File integrity monitoring on ~/Library/Preferences/ByHost",
+          "detail": "Modifications to a user's com.apple.loginwindow.[UUID].plist file adding an unrecognized application path."
+        },
+        {
+          "source": "Process execution telemetry",
+          "detail": "An unexpected application launching immediately at login with loginwindow or its reopen mechanism in the process lineage."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Loginwindow Reopen Plist Modified",
+          "description": "Flags modification of the per-user loginwindow plist file responsible for the reopened-applications list.",
+          "query": "title: macOS Reopen-Applications Plist Modified\nid: 5d8a3c9e-6f7b-4c2a-9d1e-5f8c9a3d6e50\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: macos\ndetection:\n  selection:\n    TargetFilename|contains: 'com.apple.loginwindow.'\n    TargetFilename|contains: '/ByHost/'\n  condition: selection\nfalsepositives:\n  - Normal macOS behavior updating the reopen list every time a user legitimately logs out with applications open\nlevel: low\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.007"
+        }
+      ],
+      "false_positives": [
+        "Normal, routine macOS behavior that updates the reopen-applications list every time a user logs out with any application open, which will produce very high baseline volume"
+      ],
+      "response_steps": [
+        "Review the plist file's application list for any entry the user doesn't recognize or didn't intentionally leave open",
+        "Remove the malicious entry from the plist directly, since simply quitting the application won't prevent it from reopening at the next login",
+        "Disable the reopen-applications feature entirely on the affected host if a malicious entry is confirmed",
+        "Advise the affected user to hold Shift at their next login as an immediate, temporary mitigation while remediation completes"
+      ],
+      "mitigations": [
+        {
+          "id": "M1042",
+          "name": "Disable or Remove Feature or Program",
+          "detail": "Disable automatic application reopening entirely via `defaults write -g ApplePersistence -bool no`."
+        },
+        {
+          "id": "M1017",
+          "name": "User Training",
+          "detail": "Advise users that holding Shift during login prevents that session's automatic application reopening as an immediate, temporary mitigation."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1547.015",
+          "name": "Login Items",
+          "relation": "Both are macOS logon-time execution mechanisms; Login Items is the more general-purpose and more commonly abused of the two."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A user's com.apple.loginwindow.[UUID].plist file under ~/Library/Preferences/ByHost is modified to include an application path the user does not recognize as something they intentionally left open.",
+        "rationale": "Expect very high baseline noise on this hunt given how routinely macOS legitimately updates this file -- this is a hypothesis best triggered by a specific complaint or other corroborating indicator rather than run as a standalone, unscoped sweep."
+      }
+    },
+    {
+      "id": "T1547.008",
+      "name": "LSASS Driver",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/008/",
+      "overview": "Beyond authentication packages and security support providers, the LSA subsystem loads several other DLLs at boot as part of its normal function, and an adversary can either replace one of those legitimate DLLs outright or register a new malicious one to achieve the same boot-time, LSA-context execution — Wingbird's documented approach of dropping a malicious sspisrv.dll alongside a copy of lsass.exe and registering it as a service-loaded driver is one concrete, real-world example of the general pattern.",
+      "concepts": [
+        {
+          "term": "This sub-technique is the general case; T1547.002 and .005 are its two named special cases",
+          "explanation": "Authentication Package and Security Support Provider both describe specific, named registry mechanisms for getting a DLL loaded into LSA — LSASS Driver covers the broader category of directly replacing or adding to LSA's other loaded components through means beyond just those two specific registry values, including outright infecting or replacing an existing trusted DLL rather than only registering a new one. A hunt program that only checks the Authentication Packages and Security Packages registry values, and stops there, is covering the two most common but not the only paths into this same LSA-loaded-component territory."
+        },
+        {
+          "term": "Infecting an existing trusted DLL is quieter than adding a new one",
+          "explanation": "Pasam's approach of infecting the SAM DLL directly, rather than registering an entirely new, unfamiliar-named component, means there's no new registry entry at all to alert on — the change lives inside the DLL file's own content, detectable only by file-hash or signature verification against a known-good baseline, not by registry monitoring. That's a meaningfully different and harder detection problem than the registry-based sub-techniques elsewhere in this pack."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Pasam",
+          "activity": "Achieves persistence by infecting the Security Accounts Manager (SAM) DLL directly to load a malicious DLL dropped to disk, rather than registering a new component."
+        },
+        {
+          "actor": "Wingbird",
+          "activity": "Drops a malicious sspisrv.dll alongside a copy of lsass.exe and registers a service that loads it as a driver, executing when the malicious driver loads before the spoofed service completes."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "File integrity/signature monitoring on system32 LSA-related DLLs",
+          "detail": "Hash or signature mismatches on DLLs known to be loaded by LSA, compared against a known-good baseline, catching the direct-infection variant that leaves no new registry entry."
+        },
+        {
+          "source": "LSASS module load telemetry",
+          "detail": "Any DLL loading into lsass.exe that is unsigned, unexpected, or newly introduced relative to an established baseline of normal LSA components."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "KQL",
+          "title": "Unsigned or Unbaselined DLL Loaded Into LSASS",
+          "description": "Flags any module load into lsass.exe that is unsigned or not present in a maintained baseline of expected LSA-loaded DLLs.",
+          "query": "DeviceImageLoadEvents\n| where FileName == \"lsass.exe\"\n| where IsSigned == false or InitiatingProcessFileName !in (KnownLsaModuleBaseline)\n| project Timestamp, DeviceName, FileName, FolderPath, Sha256\n| order by Timestamp desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate third-party credential-provider or smart-card software that adds a new, signed DLL to the LSA-loaded baseline"
+      ],
+      "mitigations": [
+        {
+          "id": "M1043",
+          "name": "Credential Access Protection",
+          "detail": "Enable Windows Defender Credential Guard on supported Windows versions to isolate lsass.exe in a virtualized environment where standard device drivers cannot attach at all."
+        },
+        {
+          "id": "M1025",
+          "name": "Privileged Process Integrity",
+          "detail": "Enable LSA Protection (RunAsPPL) to require Microsoft-signed DLLs for anything loaded by LSA."
+        },
+        {
+          "id": "M1044",
+          "name": "Restrict Library Loading",
+          "detail": "Enable Safe DLL Search Mode to reduce the risk of DLL search-order hijacking contributing to this technique."
+        }
+      ],
+      "response_steps": [
+        "Compare the suspect DLL's hash against a known-good baseline to confirm whether it's an infected legitimate file or an entirely new addition",
+        "Restore the legitimate, clean version of any infected DLL from a trusted source rather than attempting in-place repair",
+        "Reboot the host after remediation, since the malicious component is already loaded into the running LSA process",
+        "Enable Credential Guard where supported, since it structurally prevents this entire technique category by isolating LSA from standard driver attachment"
+      ],
+      "related": [
+        {
+          "id": "T1547.002",
+          "name": "Authentication Package",
+          "relation": "A named, specific special case of this broader LSA-component-loading category, using a dedicated registry mechanism rather than direct DLL infection or replacement."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A DLL known to be loaded by lsass.exe no longer matches its expected hash against a maintained known-good baseline, with no corresponding patch or update record.",
+        "rationale": "This hunt depends entirely on having a real baseline to compare against -- without one, a hash mismatch alone can't distinguish a legitimate Windows update from malicious infection, so building and maintaining that baseline is the actual prerequisite work this hypothesis assumes is already done."
+      }
+    },
+    {
+      "id": "T1547.009",
+      "name": "Shortcut Modification",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/009/",
+      "overview": "Adversaries either drop a new .LNK shortcut file into the Startup folder or Start Menu, or modify an existing legitimate shortcut's target path, so that a click a user already habitually makes (or a boot-time Startup folder scan) launches the adversary's payload instead of or alongside the expected application. This sub-technique has one of the longest procedure-example lists in the entire pack — APT39, Astaroth, Lazarus Group, dozens of named malware families — precisely because .LNK files are simple to create programmatically, require no special privilege to write into a user's own Startup folder, and are trivially disguised with a legitimate-looking icon and name.",
+      "concepts": [
+        {
+          "term": "This overlaps with the Startup-folder half of T1547.001 but is broader",
+          "explanation": "T1547.001 covers any file dropped into the Startup folder, including a shortcut; this sub-technique specifically covers .LNK files anywhere a shortcut might trigger execution, including modifying an existing shortcut a user already trusts and regularly clicks (a taskbar pin, a desktop icon, a Start Menu entry) rather than only adding something new. The distinction matters operationally: T1547.001's detection focuses on new files appearing in a specific folder, while this sub-technique also requires checking whether existing, previously-trusted shortcuts have had their target silently redirected."
+        },
+        {
+          "term": "MarkiRAT's Telegram-shortcut modification shows the general pattern: hijack trust, don't build it",
+          "explanation": "Rather than creating a new, unfamiliar shortcut a user might question, MarkiRAT modified the existing Telegram desktop shortcut's target path — the user clicks the same icon they always click, expecting Telegram to open, and it does (frequently launching the legitimate app alongside the malicious payload so nothing appears broken). This pattern of hijacking an already-trusted click rather than creating a new one is the more dangerous and harder-to-notice variant of this sub-technique, and it's exactly why comparing a shortcut's actual target against its expected target matters more than just counting new .LNK files."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Lazarus Group",
+          "activity": "Creates LNK shortcuts in user Startup folders to establish persistence."
+        },
+        {
+          "actor": "BlackEnergy 3",
+          "activity": "Drops a DLL and creates a .lnk shortcut in the startup folder referencing it."
+        },
+        {
+          "actor": "MarkiRAT",
+          "activity": "Modifies the existing Telegram desktop shortcut's target path to launch its malicious payload alongside the legitimate application."
+        },
+        {
+          "actor": "Astaroth",
+          "activity": "Uses a malicious .LNK file as its initial payload delivery mechanism."
+        },
+        {
+          "actor": "Empire",
+          "activity": "Persists by modifying existing .LNK files to include backdoor execution alongside their original target."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon 11 (File Create)",
+          "detail": "New .lnk file creation in the Startup folder, Start Menu, or desktop, especially referencing a target outside Program Files or the Windows directory."
+        },
+        {
+          "source": "Shortcut target integrity monitoring",
+          "detail": "An existing, previously-known-good shortcut's target path changing, detectable by comparing current .lnk target metadata against a periodic baseline snapshot."
+        },
+        {
+          "source": "Sysmon 1 (Process Create)",
+          "detail": "A shortcut launching a command interpreter (cmd.exe, powershell.exe, wmic.exe) as its direct target, rather than a normal application binary."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Shortcut Target Points to Script Interpreter",
+          "description": "Flags .lnk files whose target path invokes a command interpreter or scripting engine directly, rather than a normal application executable.",
+          "query": "title: LNK Shortcut Targeting Script Interpreter\nid: 2f8a6c9d-4e7b-4c2a-9d1e-2f8c9a6d4e60\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: windows\ndetection:\n  selection:\n    TargetFilename|endswith: '.lnk'\n  selection_target:\n    LnkTargetPath|contains:\n      - 'powershell.exe'\n      - 'cmd.exe'\n      - 'wscript.exe'\n      - 'wmic.exe'\n  condition: selection and selection_target\nfalsepositives:\n  - Legitimate IT-created shortcuts that intentionally launch a script or batch file as part of an approved automation workflow\nlevel: high\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.009"
+        },
+        {
+          "language": "KQL",
+          "title": "Existing Shortcut Target Modified From Baseline",
+          "description": "Surfaces a shortcut whose current target path no longer matches a previously captured baseline for that same file, catching the trust-hijacking variant.",
+          "query": "DeviceFileEvents\n| where FileName endswith \".lnk\"\n| where ActionType == \"FileModified\"\n| project Timestamp, DeviceId, FolderPath, FileName, SHA256\n| order by Timestamp desc"
+        }
+      ],
+      "false_positives": [
+        "Legitimate IT-deployed shortcuts that intentionally launch a script, batch file, or PowerShell command as part of an approved automation or logon workflow",
+        "Software updates that legitimately modify their own shortcut's target path (e.g., a version-numbered install directory change)"
+      ],
+      "response_steps": [
+        "Compare the shortcut's current target against its expected, known-good target to determine if this is a hijacked trusted shortcut or a newly-planted one",
+        "Analyze the referenced target binary or script before removing the shortcut",
+        "Restore the shortcut to its correct target if it was a hijacked legitimate one, rather than simply deleting it, to avoid disrupting the user's normal workflow",
+        "Check other commonly-used shortcuts on the same host (browser, common applications) for the same hijacking pattern"
+      ],
+      "mitigations": [
+        {
+          "id": "M1038",
+          "name": "Execution Prevention",
+          "detail": "Restrict execution of unauthorized or unexpected shortcut targets via application control."
+        },
+        {
+          "id": "M1022",
+          "name": "Restrict File and Directory Permissions",
+          "detail": "Apply strict write permissions to Startup folders and Start Menu directories to prevent unauthorized shortcut creation."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Enforce least privilege and regularly audit which users can create or modify shortcuts in shared or system-wide locations via Group Policy."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1547.001",
+          "name": "Registry Run Keys / Startup Folder",
+          "relation": "Shares the Startup-folder delivery location, and the two are frequently used interchangeably or together by the same malware families."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A .lnk shortcut's target path invokes a command interpreter or scripting engine directly, or an existing, previously-baselined shortcut's target path has changed with no corresponding software update.",
+        "rationale": "Baseline commonly-used application shortcuts (browsers, chat clients, core business apps) specifically -- the trust-hijacking variant that modifies an existing shortcut rather than planting a new one is both harder to notice and, per real-world examples like MarkiRAT, an established, deliberate adversary choice worth defending against on its own terms."
+      }
+    },
+    {
+      "id": "T1547.010",
+      "name": "Port Monitors",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/010/",
+      "overview": "The print spooler service (spoolsv.exe) loads port monitor DLLs at startup to handle communication with printer ports, and an adversary who registers their own monitor — either via the AddMonitor API or by writing a Driver value under the Print\\Monitors registry key — gets that DLL loaded and executed with SYSTEM privileges every time the spooler service starts, which happens automatically at boot on nearly every Windows machine regardless of whether a printer is ever actually used.",
+      "concepts": [
+        {
+          "term": "The print spooler runs as SYSTEM basically everywhere, printer or not",
+          "explanation": "spoolsv.exe starts automatically at boot on the overwhelming majority of Windows installations by default, whether or not the machine has a printer attached or ever prints anything — meaning this sub-technique doesn't depend on the target actually using printing functionality at all, it only depends on the service existing and starting, which it almost always does. That default-on, printer-irrelevant startup behavior is exactly what makes the print spooler such a durable and widely-applicable target for this entire family of persistence techniques (shared with Print Processors, the next sub-technique)."
+        },
+        {
+          "term": "Legitimate monitor entries already exist, so the hunt is about the outlier, not the presence",
+          "explanation": "The Print\\Monitors registry key legitimately contains entries for Local Port, Standard TCP/IP Port, USB Monitor, and WSD Port on essentially every Windows install — a hunt that simply flags 'anything exists under this key' will alert on every single host in the fleet. The actual signal is a Driver value referencing a DLL outside that small, well-known, stable set of default entries, which is exactly the kind of narrow, baseline-dependent hunt this whole pack repeatedly requires."
+        }
+      ],
+      "procedure_examples": [],
+      "data_sources": [
+        {
+          "source": "Registry monitoring on Print\\Monitors",
+          "detail": "New subkeys under HKLM\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\ with a Driver value referencing a DLL outside the default Local Port/TCP-IP Port/USB Monitor/WSD Port set."
+        },
+        {
+          "source": "Process/module load telemetry",
+          "detail": "spoolsv.exe loading an unsigned or non-default DLL, correlated with a recent registry change under the Monitors key."
+        },
+        {
+          "source": "API call telemetry",
+          "detail": "AddMonitor API invocations from a process other than the expected print-driver installation workflow."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "New Print Monitor Registered With Non-Default Driver",
+          "description": "Flags new subkeys under the Print Monitors registry path referencing a DLL outside the small default set.",
+          "query": "title: New Print Monitor Driver Registered\nid: 4b9d7a3c-6e8f-4c2a-9d1e-4b9c7a3d6e80\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: registry_add\n  product: windows\ndetection:\n  selection:\n    TargetObject|contains: '\\Control\\Print\\Monitors\\'\n    TargetObject|endswith: '\\Driver'\n  filter_known:\n    Details|endswith:\n      - 'localspl.dll'\n      - 'tcpmon.dll'\n      - 'usbmon.dll'\n      - 'WSDMon.dll'\n  condition: selection and not filter_known\nfalsepositives:\n  - Legitimate third-party printer driver installations that register their own port monitor DLL\nlevel: high\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.010"
+        }
+      ],
+      "false_positives": [
+        "Legitimate third-party printer or print-management software that registers its own port monitor DLL as part of driver installation"
+      ],
+      "response_steps": [
+        "Identify and analyze the referenced DLL before removing the registry entry",
+        "Restart the print spooler service (or reboot) after remediation to unload the malicious DLL, since removing the registry key alone doesn't unload an already-running module",
+        "Verify the change against any recent legitimate printer installation activity before treating it as confirmed malicious",
+        "Audit for the same non-default monitor entry across other hosts if it appears to have been deployed via a shared script"
+      ],
+      "mitigations": [],
+      "related": [
+        {
+          "id": "T1547.012",
+          "name": "Print Processors",
+          "relation": "The closest sibling technique — both abuse the print spooler's DLL-loading behavior at boot to achieve SYSTEM-level execution, differing only in which specific spooler extension point is used."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A new subkey appears under HKLM\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\ with a Driver value referencing a DLL outside the default Local Port, Standard TCP/IP Port, USB Monitor, or WSD Port set.",
+        "rationale": "This hunt has no listed MITRE-endorsed preventive mitigation, so tune the default-entry exclusion list carefully against your own fleet's legitimate printer software before trusting the result -- a poorly-scoped baseline is the difference between a clean, actionable hunt and one buried in printer-driver noise."
+      }
+    },
+    {
+      "id": "T1547.012",
+      "name": "Print Processors",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/012/",
+      "overview": "Print processors are another spoolsv.exe extension point, loaded via the AddPrintProcessor API (which requires SeLoadDriverPrivilege) or by directly editing the Driver value under the Print\\Environments\\...\\Print Processors registry path, with the payload required to sit in the system's print-processor directory — Gelsemium's documented deployment of a malicious winprint.dll directly into that exact spooler-loaded path shows the technique working end-to-end in a real campaign.",
+      "concepts": [
+        {
+          "term": "The file has to live in one specific, discoverable directory",
+          "explanation": "Unlike a Run key, which can point at a binary anywhere on disk, this sub-technique requires the payload to physically reside in the system's print-processor directory (obtainable via the GetPrintProcessorDirectory API, typically under C:\\Windows\\System32\\spool\\prtprocs\\) — a narrower, more predictable location than most other sub-techniques in this pack, which makes file-integrity monitoring specifically scoped to that one directory a disproportionately efficient hunt relative to its effort."
+        },
+        {
+          "term": "SeLoadDriverPrivilege is the actual gate, and it's a removable one",
+          "explanation": "The AddPrintProcessor API path specifically requires the calling account to hold SeLoadDriverPrivilege, a right most standard user accounts don't have by default — which means disabling or restricting that privilege for accounts that don't operationally need it removes this specific installation path entirely (though the direct registry-edit variant, if the account already has sufficient registry write access, doesn't depend on this same privilege check)."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Earth Lusca",
+          "activity": "Modified the Print Processors registry path under UDPrint to reference a malicious DLL for persistence."
+        },
+        {
+          "actor": "Gelsemium",
+          "activity": "Deployed its payload directly to C:\\Windows\\System32\\spool\\prtprocs\\x64\\winprint.dll, where it was automatically loaded by the spooler service."
+        },
+        {
+          "actor": "PipeMon",
+          "activity": "Modified the Print Processors registry path to establish persistence through a fraudulent print processor installation."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "File integrity monitoring on the system print-processor directory",
+          "detail": "New or modified DLL files under C:\\Windows\\System32\\spool\\prtprocs\\, outside of a documented Windows update or printer driver installation."
+        },
+        {
+          "source": "Registry monitoring on Print\\Environments\\...\\Print Processors",
+          "detail": "New or modified Driver values referencing a DLL not part of the default print-processor set (winprint.dll being the only common legitimate entry on most systems)."
+        },
+        {
+          "source": "Process/module load telemetry",
+          "detail": "spoolsv.exe loading a DLL correlated with a recent write to the print-processor directory or registry path, especially at service restart."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "New DLL Written to Print Processor Directory",
+          "description": "Flags new or modified files in the system print-processor directory outside of a legitimate Windows update or driver installation.",
+          "query": "title: File Written to Print Processor Directory\nid: 6c8d9a3e-4f7b-4c2a-9d1e-6c8d9a3e4f70\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: windows\ndetection:\n  selection:\n    TargetFilename|contains: '\\spool\\prtprocs\\'\n    TargetFilename|endswith: '.dll'\n  condition: selection\nfalsepositives:\n  - Legitimate Windows update or printer driver installation writing a new print processor DLL\nlevel: high\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.012"
+        }
+      ],
+      "false_positives": [
+        "Legitimate Windows Update or third-party printer driver installation writing a new, signed print processor DLL"
+      ],
+      "response_steps": [
+        "Identify and analyze the DLL in the print-processor directory before removal",
+        "Restart the print spooler service after remediation to unload the malicious module",
+        "Verify the file's digital signature and compare its hash against known-good Windows print processor DLLs",
+        "Audit for SeLoadDriverPrivilege assignment on the host, and restrict it to only accounts that operationally require it"
+      ],
+      "mitigations": [
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Disable SeLoadDriverPrivilege for accounts that don't require it, restricting which users can load or unload drivers and closing the AddPrintProcessor API installation path."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1547.010",
+          "name": "Port Monitors",
+          "relation": "The closest sibling technique — both abuse a different specific extension point of the same print spooler service to achieve SYSTEM-level execution at boot."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A new or modified DLL appears in the system print-processor directory, or a new Driver value under the Print Processors registry path references a DLL outside the default winprint.dll baseline.",
+        "rationale": "The narrow, predictable file-system location this technique requires makes it one of the more efficient hunts in the entire pack -- a single directory to file-integrity-monitor covers this sub-technique almost completely, unlike most others that need multiple registry paths and process-behavior correlation."
+      }
+    },
+    {
+      "id": "T1547.013",
+      "name": "XDG Autostart Entries",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Linux"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/013/",
+      "overview": "XDG-compliant Linux desktop environments (GNOME, KDE, and most modern distributions) automatically execute .desktop entry files found in system-wide (/etc/xdg/autostart) or per-user (~/.config/autostart) directories at login, and an adversary who drops or edits a .desktop file's Exec directive gets their command run automatically the next time that user's graphical session starts — this is the Linux desktop-environment equivalent of Windows' Startup folder, and requires no root privilege at all for the user-level variant.",
+      "concepts": [
+        {
+          "term": "This is a graphical-session mechanism, which quietly limits its reach",
+          "explanation": "XDG autostart only fires for a user logging into a graphical desktop environment — a headless Linux server with no GUI installed has no autostart directory that ever gets processed at all, which means this specific sub-technique is disproportionately relevant to Linux workstations and jump boxes rather than the server infrastructure that dominates most enterprise Linux fleets. A hunt program should weight this sub-technique's priority based on how many Linux desktop/workstation deployments actually exist in the environment, rather than treating it as universally applicable across every Linux host."
+        },
+        {
+          "term": "The user-level path needs no elevated privilege at all",
+          "explanation": "Fysbis's documented behavior of specifically placing its .desktop file under the user-level ~/.config/autostart path when running without root shows the practical fallback logic: the system-wide /etc/xdg/autostart location requires root to write to, but the per-user directory doesn't, so an adversary who only ever obtained regular user-level code execution can still achieve durable persistence for that user's own sessions without ever needing to escalate privileges at all."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "InvisibleFerret",
+          "activity": "Creates .desktop entries on GNOME-based Linux systems as part of the Contagious Interview campaign's persistence mechanism."
+        },
+        {
+          "actor": "Fysbis",
+          "activity": "Places .desktop files in the user's ~/.config/autostart directory specifically when running without root privileges."
+        },
+        {
+          "actor": "CrossRAT",
+          "activity": "Leverages XDG Autostart entries as its cross-platform Linux persistence mechanism."
+        },
+        {
+          "actor": "RotaJakiro",
+          "activity": "Installs user-level .desktop files under $HOME/.config/autostart/ for persistence."
+        },
+        {
+          "actor": "NETWIRE",
+          "activity": "Uses XDG Autostart entries to establish persistence on Linux systems."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "auditd / file integrity monitoring",
+          "detail": "New or modified .desktop files under /etc/xdg/autostart (system-wide, requires root) or ~/.config/autostart (per-user, no elevated privilege required)."
+        },
+        {
+          "source": "Process execution telemetry",
+          "detail": "A process launching at graphical login whose parent chain traces back to the desktop environment's session manager, with an Exec path not associated with any installed package."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "New or Modified XDG Autostart Desktop Entry",
+          "description": "Flags creation or modification of a .desktop file in either the system-wide or per-user XDG autostart directory.",
+          "query": "title: XDG Autostart Entry Created or Modified\nid: 7a9c3d6e-8f4b-4c2a-9d1e-7a9c3d6e4f80\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: file_event\n  product: linux\ndetection:\n  selection:\n    TargetFilename|contains:\n      - '/etc/xdg/autostart/'\n      - '/.config/autostart/'\n    TargetFilename|endswith: '.desktop'\n  condition: selection\nfalsepositives:\n  - Legitimate application installation via the distribution's package manager, which routinely creates .desktop autostart entries for its own tray/helper components\nlevel: medium\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.013"
+        }
+      ],
+      "false_positives": [
+        "Legitimate application installation via the distribution's package manager, which routinely creates .desktop autostart entries for tray applets, update checkers, and similar helper components"
+      ],
+      "response_steps": [
+        "Review the .desktop file's Exec directive to identify exactly what command runs at login",
+        "Remove the malicious entry and check whether the same user account has other autostart or cron-based persistence planted alongside it",
+        "Distinguish system-wide entries (which imply root-level compromise) from user-level entries (which only require that user's own privileges) to correctly scope the incident",
+        "Check package manager records to confirm whether the entry corresponds to any actually-installed package before treating it as malicious"
+      ],
+      "mitigations": [
+        {
+          "id": "M1033",
+          "name": "Limit Software Installation",
+          "detail": "Restrict installations to trusted repositories and monitor for orphaned packages that leave autostart entries with no corresponding installed software."
+        },
+        {
+          "id": "M1022",
+          "name": "Restrict File and Directory Permissions",
+          "detail": "Limit write access to the system-wide XDG autostart directory to privileged users only."
+        },
+        {
+          "id": "M1018",
+          "name": "User Account Management",
+          "detail": "Restrict privileges so that only authorized users and processes can modify autostart entries, including their own per-user directory where policy requires it."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1053.006",
+          "name": "Systemd Timers",
+          "relation": "An alternative Linux persistence mechanism that doesn't depend on a graphical session at all, making it the more universally-applicable choice on headless server infrastructure."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A .desktop file appears or is modified under /etc/xdg/autostart or a user's ~/.config/autostart directory, referencing an Exec path with no corresponding entry in the package manager's installed-file manifest.",
+        "rationale": "Cross-reference against the package manager's own file manifest rather than a static allow-list -- that gives you an automatically self-updating baseline as legitimate software is installed and removed, instead of a list that goes stale every time the fleet's software inventory changes."
+      }
+    },
+    {
+      "id": "T1547.014",
+      "name": "Active Setup",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["Windows"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/014/",
+      "overview": "Active Setup is a Windows mechanism originally intended to let installers run a one-time, per-user configuration step the first time each user logs onto a newly-imaged machine; a registry key under Active Setup\\Installed Components with a StubPath value gets executed for every user at their next logon, and an adversary who plants their own component there — with a suitably innocuous-looking name — gets their payload to run for every current and future user of the machine going forward.",
+      "concepts": [
+        {
+          "term": "This targets multi-user, imaged environments particularly well",
+          "explanation": "Because Active Setup fires for every user who logs onto the machine, not just the one active when the entry was created, this sub-technique is disproportionately effective on shared workstations, terminal servers, or freshly-imaged fleets where many different accounts will eventually log in — a single planted entry can execute across dozens of user sessions over time without the adversary needing to target each account individually."
+        },
+        {
+          "term": "Masquerading as a legitimate installed component is the actual defense to work around",
+          "explanation": "PoisonIvy's documented use of this technique specifically relies on the entry blending into the dozens of genuinely legitimate Active Setup components most Windows installs already have (from real software installers that use this same one-time-per-user mechanism for entirely benign purposes) — a hunt has to compare against a real, maintained baseline of expected components rather than trying to spot malicious entries by name alone, since a well-disguised entry name defeats any purely visual review."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "PoisonIvy",
+          "activity": "Creates Registry keys in Active Setup pointing to malicious executables, documented in use by the Tropic Trooper group targeting Taiwanese government and energy-sector organizations."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Registry monitoring on Active Setup\\Installed Components",
+          "detail": "New subkeys with a StubPath value referencing a binary outside a documented, maintained baseline of legitimately-installed software components."
+        },
+        {
+          "source": "Sysmon 1 (Process Create)",
+          "detail": "Process execution at logon with an unusual parent chain, correlated against a recently-added Active Setup StubPath entry."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "New Active Setup Component With Non-Baselined StubPath",
+          "description": "Flags new Active Setup component registration referencing a binary path not present in the environment's known-good software baseline.",
+          "query": "title: Suspicious Active Setup Component Registered\nid: 9d3f7a4c-6e8b-4c2a-9d1e-9d3f7a4c6e90\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: registry_add\n  product: windows\ndetection:\n  selection:\n    TargetObject|contains: '\\Active Setup\\Installed Components\\'\n    TargetObject|endswith: '\\StubPath'\n  filter_baseline:\n    Details|contains: 'BaselinedSoftwarePaths'\n  condition: selection and not filter_baseline\nfalsepositives:\n  - Legitimate software installers that use Active Setup for a genuine one-time per-user configuration step\nlevel: high\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.014"
+        }
+      ],
+      "false_positives": [
+        "Legitimate software installers, particularly enterprise deployment tools and browser plugins, that use Active Setup for a genuine one-time per-user configuration step"
+      ],
+      "response_steps": [
+        "Identify and analyze the referenced binary before removing the Active Setup entry",
+        "Determine how many distinct users have already logged onto the machine since the entry was planted, since each represents a potential execution of the payload",
+        "Remove the malicious component entry and check other imaged or shared machines built from the same base image for the same planted entry",
+        "Build or update the environment's Active Setup component baseline going forward to make future hunts on this key more precise"
+      ],
+      "mitigations": [],
+      "related": [
+        {
+          "id": "T1547.004",
+          "name": "Winlogon Helper DLL",
+          "relation": "Both fire at logon time via a native Windows mechanism rather than a scheduled task, and both are frequently disguised with legitimate-sounding names to blend into a large set of genuinely benign entries."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A new subkey appears under Active Setup\\Installed Components with a StubPath value referencing a binary not present in the environment's maintained software baseline.",
+        "rationale": "This hunt has no listed preventive mitigation per MITRE's own guidance, and depends entirely on a real baseline of legitimate components -- invest in building and maintaining that baseline first, since without it a well-disguised malicious entry name will pass a purely visual review every time."
+      }
+    },
+    {
+      "id": "T1547.015",
+      "name": "Login Items",
+      "tactic": "TA0003",
+      "tactic_name": "Persistence",
+      "platforms": ["macOS"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1547/015/",
+      "overview": "macOS lets a user (or a program acting on their behalf) register applications, documents, or server connections to launch automatically at login through two distinct mechanisms — the SMLoginItemSetEnabled API, which uses launchd and stays invisible in System Preferences, or the older Shared File List approach usually driven via AppleScript, which is visible in System Preferences but can still hide the launched application's window from the user. Dok's documented use of AppleScript to add a login item by sending Apple events directly to the System Events process is the canonical example of this sub-technique in active use.",
+      "concepts": [
+        {
+          "term": "Two mechanisms means two different places to look, with different visibility properties",
+          "explanation": "A login item added via SMLoginItemSetEnabled never appears in System Preferences at all and can only be removed by the specific application that created it, making it the quieter and more persistent of the two paths — while the Shared File List / AppleScript approach is at least visible to a user who thinks to check System Preferences, even though the launched application itself can still be configured to hide its window and run invisibly in the background. A hunt that only checks the visible System Preferences list is structurally blind to the SMLoginItemSetEnabled variant entirely."
+        },
+        {
+          "term": "AppleScript talking to System Events is the dominant real-world delivery mechanism",
+          "explanation": "Dok's specific technique — sending an Apple event telling System Events to \"make login item at end with properties /path/to/executable\" — doesn't require any special API knowledge or compiled code at all, just a single AppleScript command any macOS malware author can embed directly in a shell script or a downloaded payload. That low barrier to entry is exactly why this sub-technique appears reliably across independent, otherwise-unrelated macOS malware families rather than being the signature of one sophisticated actor."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Dok",
+          "activity": "Uses AppleScript to install a login item by sending Apple events to the System Events process, adding its payload to the user's automatic-login list."
+        },
+        {
+          "actor": "Green Lambert",
+          "activity": "Established persistence by adding itself as a macOS login item."
+        },
+        {
+          "actor": "NETWIRE",
+          "activity": "Persisted on macOS via the login-items startup mechanism."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "File integrity monitoring on backgrounditems.btm",
+          "detail": "Modifications to ~/Library/Application Support/com.apple.backgroundtaskmanagementagent/backgrounditems.btm, which tracks the current login item list."
+        },
+        {
+          "source": "AppleScript / Apple Events telemetry",
+          "detail": "An osascript process or equivalent sending an Apple event to System Events with a 'make login item' command, especially from a script rather than an interactive Script Editor session."
+        },
+        {
+          "source": "File system monitoring",
+          "detail": "New executables appearing under an application's Contents/Library/LoginItems/ directory."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "AppleScript Adding a Login Item via System Events",
+          "description": "Flags osascript or equivalent execution sending a login-item creation command to the System Events process.",
+          "query": "title: AppleScript Login Item Creation\nid: 3e7c9a6d-4f8b-4c2a-9d1e-3e7c9a6d4f10\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: macos\ndetection:\n  selection:\n    Image|endswith: '/osascript'\n    CommandLine|contains:\n      - 'make login item'\n      - 'System Events'\n  condition: selection\nfalsepositives:\n  - Legitimate installer scripts for approved macOS software that use AppleScript to register a genuine login item during setup\nlevel: medium\ntags:\n  - attack.persistence\n  - attack.privilege_escalation\n  - attack.t1547.015"
+        }
+      ],
+      "false_positives": [
+        "Legitimate installer scripts for approved macOS applications that use AppleScript to register a genuine login item as part of normal setup"
+      ],
+      "response_steps": [
+        "Check both the visible System Preferences login items list and the backgrounditems.btm file directly, since a SMLoginItemSetEnabled-registered item won't appear in the visible list at all",
+        "Identify and remove the malicious login item, using the application that created it if using the SMLoginItemSetEnabled mechanism, since it may not be removable by other means",
+        "Analyze the referenced application or script before removal",
+        "Check for other AppleScript-driven persistence or automation on the same host, since a scripting-capable adversary may have planted more than one mechanism"
+      ],
+      "mitigations": [],
+      "related": [
+        {
+          "id": "T1547.007",
+          "name": "Re-opened Applications",
+          "relation": "Both are macOS logon-time execution mechanisms; Login Items is the more general-purpose, more actively documented, and more commonly abused of the two."
+        }
+      ],
+      "hypothesis": {
+        "statement": "An osascript process sends a 'make login item' Apple event to System Events, from a script context rather than an interactive Script Editor session, on a host with no corresponding approved software installation record.",
+        "rationale": "Check backgrounditems.btm directly as part of this hunt, not just the visible System Preferences list -- the SMLoginItemSetEnabled mechanism is invisible to the standard UI check entirely, so a hunt that only looks there will systematically miss the quieter of the two delivery paths."
+      }
+    }
+  ]
+}

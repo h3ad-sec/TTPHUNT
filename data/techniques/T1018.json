@@ -1,0 +1,132 @@
+{
+  "id": "T1018",
+  "name": "Remote System Discovery",
+  "tactic": "TA0007",
+  "tactic_name": "Discovery",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "ESXi",
+    "Network Devices"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1018/",
+  "overview": "Before an adversary can move laterally (T1021), they need a map of what's actually reachable — this is that mapping step, and it's the natural upstream partner to TTPHUNT's existing Remote Services pack: T1018 tells the attacker where to go, T1021 is how they get there. Adversaries pull this map from wherever it's cheapest: `ping`/`net view`/NBTscan sweeps, LDAP queries against Active Directory, passive reads of ARP caches and /etc/hosts, or CLI commands run directly against network infrastructure devices. Like T1087 (Account Discovery) already in this tool, the tooling here is almost entirely legitimate IT administration software being pointed at a different objective, which pushes detection toward behavioral volume and context rather than signature matching.",
+  "prerequisite_concepts": [
+    {
+      "term": "This produces the target list T1021 acts on",
+      "explanation": "Remote System Discovery and Remote Services (T1021) are two halves of the same lateral-movement decision: this technique answers 'what's out there,' and T1021 answers 'how do I get to it.' A hunter who confirms T1018 activity on a host should treat T1021-style activity against the newly-discovered systems as the expected next step to watch for, not a separate, unrelated concern — the two packs' hypotheses are designed to be run as a pair against the same host and time window."
+    },
+    {
+      "term": "BloodHound turns a system list into an attack-path graph, exactly like it does for accounts",
+      "explanation": "The same BloodHound-style graphing logic TTPHUNT's T1087.002 pack describes for domain accounts applies here to systems: enumerating every reachable host and its trust relationships lets an adversary compute the shortest path to a high-value target rather than guessing, which is a qualitatively more dangerous output than a flat host list. Any confirmed BloodHound-style tooling execution should be treated as 'the adversary now has a map of the whole environment,' not just 'reconnaissance happened.'"
+    },
+    {
+      "term": "Volume and scope, not the command itself, is what separates this from routine IT work",
+      "explanation": "`ping` and `net view` are used constantly by legitimate network administrators — there is no version of this technique that can be caught by simply flagging the command's existence without producing overwhelming noise in any actively-managed environment. Every detection query in this pack is built around a volume or scope threshold (how many hosts, how many enumeration commands in how short a window) precisely because that's the only reliable way to separate a targeted reconnaissance sweep from routine troubleshooting."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1018",
+      "name": "Remote System Discovery",
+      "tactic": "TA0007",
+      "tactic_name": "Discovery",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1018/",
+      "overview": "Adversaries enumerate hosts on the network by IP, hostname, or logical identifier using native OS utilities (ping, net view, nbtscan), LDAP/Active Directory queries via tools like AdFind, passive analysis of local host files and ARP caches, or CLI commands issued directly against network infrastructure — building the target inventory that everything from lateral movement to ransomware's worm-like propagation depends on. Named actors across every category show up here: Sandworm Team used LDAP queries to discover OT systems during the 2015-2016 Ukraine power grid attacks, Wizard Spider paired AdFind with nltest and PowerShell against domain computers, and ransomware operators from Conti through Akira lean on the same handful of tools (Advanced IP Scanner, MASSCAN, net view) almost interchangeably.",
+      "concepts": [
+        {
+          "term": "The same discovery, four different platforms, four different commands",
+          "explanation": "A Windows host reveals its view of the network through net view and nbtscan; a Linux or macOS host through arp, netstat, ping, and a read of /etc/hosts; an ESXi host through esxcli network diagnostics run over SSH; a network device through CLI commands like 'show cdp neighbors' and 'show arp'. The underlying objective and output (a list of reachable systems) is identical across all four, but the specific commands and therefore the specific detection queries have essentially nothing in common — a hunt program built only around Windows net.exe monitoring will be completely blind to the same reconnaissance happening from a compromised Linux jump host or network appliance."
+        },
+        {
+          "term": "Passive analysis leaves no command to catch at all",
+          "explanation": "Reading /etc/hosts, examining a cached ARP table, or reviewing already-known_hosts entries requires no network traffic and no suspicious command execution whatsoever — an adversary who only needs a rough picture of the local segment can get one purely by looking at files and in-memory tables the host already has, without a single packet leaving the machine. That's a genuine blind spot for any detection strategy built purely around network or process telemetry, and it's part of why file-access monitoring on these specific paths is listed as its own data source rather than an afterthought."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "Sandworm Team",
+          "activity": "Discovered OT systems via LDAP queries during the 2015-2016 Ukraine electric power grid attacks."
+        },
+        {
+          "actor": "Wizard Spider",
+          "activity": "Employed AdFind, nltest, and PowerShell scripts targeting domain computers as part of its network-mapping workflow."
+        },
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Used ping and multiple other enumeration methods against critical infrastructure targets."
+        },
+        {
+          "actor": "Akira",
+          "activity": "Deployed Advanced IP Scanner and MASSCAN as part of its ransomware pre-encryption network-mapping phase."
+        },
+        {
+          "actor": "BloodHound",
+          "activity": "Enumerates and collects the properties of domain computers to compute attack paths, the systems-discovery equivalent of its account-discovery capability."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon 1 / Security 4688 (Windows)",
+          "detail": "Execution of net view, nbtscan, ping, or AdFind at a volume or against a scope (subnet sweep, full-domain enumeration) inconsistent with routine troubleshooting."
+        },
+        {
+          "source": "auditd / shell history (Linux, macOS)",
+          "detail": "Chained ping, arp, traceroute, or netstat commands executed in rapid succession, or reads of /etc/hosts and ARP cache tables outside a documented monitoring agent's normal activity."
+        },
+        {
+          "source": "ESXi shell/SSH and vSphere API session logs",
+          "detail": "esxcli network diagnostic commands or routing-table queries run from a session not associated with the vCenter server itself."
+        },
+        {
+          "source": "Network device syslog / CLI audit logs",
+          "detail": "'show cdp neighbors', 'show arp', or equivalent topology-enumeration commands issued outside a documented change window."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Sequential Network Enumeration Commands",
+          "description": "Flags a tight sequence of net.exe, ping.exe, and tracert.exe executions from the same host in a short window, consistent with active network mapping rather than isolated troubleshooting.",
+          "query": "title: Sequential Network Discovery Commands\nid: 5f8c3a9d-6e7b-4c2a-9d1e-5f8c3a9d6e70\nstatus: experimental\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith:\n      - '\\net.exe'\n      - '\\nbtscan.exe'\n      - '\\AdFind.exe'\n  timeframe: 10m\n  condition: selection | count() by ComputerName > 5\nfalsepositives:\n  - IT help desk or network operations staff performing legitimate multi-host troubleshooting in a short window\nlevel: medium\ntags:\n  - attack.discovery\n  - attack.t1018"
+        },
+        {
+          "language": "KQL",
+          "title": "High-Volume Subnet Ping Sweep",
+          "description": "Surfaces a single host issuing ICMP/ping requests against an unusually high number of distinct destination addresses in a short window, the core signature of an active subnet sweep.",
+          "query": "DeviceNetworkEvents\n| where ActionType == \"ConnectionAttempt\" and Protocol == \"ICMP\"\n| summarize DistinctTargets = dcount(RemoteIP) by DeviceId, bin(Timestamp, 5m)\n| where DistinctTargets > 50\n| order by DistinctTargets desc"
+        }
+      ],
+      "false_positives": [
+        "IT help desk, network operations, or security tooling performing legitimate multi-host troubleshooting or an approved vulnerability scan",
+        "Configuration-management or monitoring agents that perform their own periodic network inventory as part of normal function",
+        "A legitimate BloodHound or similar security-assessment run during an approved penetration test or red-team exercise"
+      ],
+      "response_steps": [
+        "Identify the full scope of what was enumerated — a single-subnet ping sweep is a very different risk level than a full-domain LDAP-based system inventory",
+        "Check for follow-on T1021-style connection attempts against any of the discovered systems, since that's the expected next step in the chain",
+        "Determine whether the enumeration originated from a host or account with a legitimate reason to perform it before escalating",
+        "If BloodHound-style tooling is confirmed, assume the adversary has a full attack-path map of the environment and prioritize response accordingly"
+      ],
+      "mitigations": [],
+      "related": [
+        {
+          "id": "T1021.001",
+          "name": "Remote Desktop Protocol",
+          "relation": "A common next step once this discovery activity has identified which hosts are reachable and worth targeting for interactive access."
+        },
+        {
+          "id": "T1087.002",
+          "name": "Domain Account",
+          "relation": "Frequently performed in the same session using the same tooling (AdFind, BloodHound), since account and system discovery both feed the same attack-path computation."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A single host executes net view, nbtscan, or AdFind more than five times within ten minutes, or issues ICMP requests to more than fifty distinct destination addresses within five minutes.",
+        "rationale": "Scope this hunt with an explicit allowlist of IT/network-ops source hosts from the outset -- without it, legitimate troubleshooting and scheduled vulnerability scanning will dominate the result set and bury the sweep worth actually investigating."
+      }
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "id": "T1105",
+  "name": "Ingress Tool Transfer",
+  "tactic": "TA0011",
+  "tactic_name": "Command and Control",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "ESXi",
+    "Network Devices"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1105/",
+  "overview": "Almost no intrusion arrives fully formed — the initial foothold is usually small and limited, and the adversary's actual toolkit (a credential dumper, a lateral-movement framework, a second-stage implant) gets pulled in afterward, over whatever C2 channel or alternate protocol is already available. This is one of the most universally observed techniques in the entire ATT&CK framework, with over 400 documented malware families using it, precisely because it's the connective tissue between 'we have a foothold' and 'we have our actual tools here' — it's the direct, practical payoff of every C2 channel TTPHUNT's T1071 pack already covers, and the reason a hunt built around T1071's beaconing detection should always be paired with a hunt for the file transfer that beacon eventually carries.",
+  "prerequisite_concepts": [
+    {
+      "term": "This is what a C2 channel is actually for, most of the time",
+      "explanation": "T1071 (Application Layer Protocol) covers how an adversary's traffic blends into normal-looking network activity; this technique is frequently the actual payload riding on top of that channel — a beacon that phones home isn't valuable on its own, it's valuable because it can pull down whatever the operator decides is needed next. Any hunt confirming T1071-style beaconing should treat a subsequent file download over the same channel as the expected continuation of the same event, not a separate finding to investigate independently."
+        },
+    {
+      "term": "The tool itself changes constantly; the download behavior doesn't",
+      "explanation": "Over 400 different malware families use this technique specifically because the pattern (fetch a file from somewhere, over some protocol, into some local path) is a stable behavioral signature that survives no matter how often the specific payload's hash, C2 infrastructure, or even malware family changes. Detection built around 'has certutil.exe ever been used with -urlcache' or 'did PowerShell just call DownloadString' catches this technique across an enormous and constantly-shifting population of actual malware, which is exactly why it's one of the highest-value, most durable detection investments in this entire tool."
+    },
+    {
+      "term": "Living-off-the-land download utilities are the dominant real-world pattern",
+      "explanation": "certutil, PowerShell's Invoke-WebRequest and IEX(New-Object Net.WebClient).downloadString(), curl, wget, and scp are all legitimate, pre-installed tools on their respective platforms — an adversary using them for ingress tool transfer needs to introduce no new binary to the environment at all, which is the same LOLBin-abuse logic TTPHUNT's T1059 pack already covers, applied here specifically to the moment of pulling in additional tooling rather than to general command execution."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1105",
+      "name": "Ingress Tool Transfer",
+      "tactic": "TA0011",
+      "tactic_name": "Command and Control",
+      "platforms": ["Windows", "Linux", "macOS", "ESXi", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1105/",
+      "overview": "Adversaries pull additional tools and payloads into a compromised environment using built-in utilities — certutil and PowerShell's download cmdlets on Windows, curl/wget/scp/tftp/rsync on Linux and macOS, wget/curl/scp on ESXi — or by abusing package managers, cloud sync services, and legitimate web services to deliver files without needing custom transfer infrastructure at all. APT28's pattern of using a first-stage downloader specifically to contact C2 and retrieve a second-stage implant, and the 2024 Cutting Edge campaign's use of exploit chains to download remote files directly to Ivanti Connect Secure VPN appliances, both illustrate how this technique bridges the gap between an initial exploit or foothold and the adversary's actual operational toolkit.",
+      "concepts": [
+        {
+          "term": "certutil's hash-verification feature makes it a fully legitimate-looking downloader",
+          "explanation": "certutil -urlcache and certutil -hashfile are genuine, documented Windows certificate-management functions that happen to double as a fully capable file-download and integrity-check utility — an adversary using certutil to pull down a payload and then verify its hash looks, at the command level, exactly like a system administrator managing certificates, which is precisely why command-line argument inspection (not just the presence of certutil.exe) is what separates malicious use from the tool's actual documented purpose."
+        },
+        {
+          "term": "Cloud sync abuse turns a legitimate service into an unwitting delivery mechanism",
+          "explanation": "An adversary who compromises a victim's Dropbox or OneDrive credentials can place a file in that cloud storage account and let the victim's own already-configured sync client pull it down automatically onto the compromised endpoint — no direct network connection between the adversary's infrastructure and the victim machine is ever required at all, since the legitimate cloud service and the victim's own sync software do the actual file transfer. This is a meaningfully different detection problem than a direct HTTP download, since the traffic in question is entirely between the victim and a fully legitimate, high-reputation cloud provider."
+        },
+        {
+          "term": "The Windows search-ms protocol handler turns a browser click into a remote file open",
+          "explanation": "The search-ms: URI scheme lets a crafted link or attachment open Windows Explorer's search interface pointed at a remote share, displaying attacker-hosted files as if they were local search results a user might reasonably double-click — a documented delivery refinement that blurs the line between ingress tool transfer and simple social engineering, since the 'transfer' is really just the user themselves opening a file that was never actually pre-staged on their own system at all."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT28",
+          "activity": "Used a first-stage downloader to contact its C2 server and obtain a second-stage implant, establishing its full operational toolkit only after initial contact."
+        },
+        {
+          "actor": "APT41",
+          "activity": "Executed certutil.exe via a web shell to download malware droppers as part of its documented DUST campaign."
+        },
+        {
+          "actor": "Sandworm Team",
+          "activity": "Pushed additional malicious tools onto an infected system during the 2015 Ukraine electric power attack, using them to steal credentials, move laterally, and destroy data."
+        },
+        {
+          "actor": "FIN7",
+          "activity": "Downloaded additional malware to execute on the victim's machine, including via a PowerShell script that launched shellcode to retrieve a further payload."
+        },
+        {
+          "actor": "Cutting Edge Campaign",
+          "activity": "Leveraged exploits to download remote files directly onto Ivanti Connect Secure VPN appliances as part of a documented exploitation chain."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Sysmon 1 / Security 4688 (Windows)",
+          "detail": "certutil execution with -urlcache or -decode arguments, or PowerShell invoking DownloadFile/DownloadString/Invoke-WebRequest, especially from a process with no prior history of network-facing activity."
+        },
+        {
+          "source": "auditd / process telemetry (Linux, macOS, ESXi)",
+          "detail": "curl, wget, scp, or tftp execution from an unexpected process context, particularly a web server or application process rather than an interactive administrative session."
+        },
+        {
+          "source": "Network / proxy logs",
+          "detail": "Outbound HTTP/S, FTP, or SMB file-transfer traffic to a destination with no prior communication history from that specific host."
+        },
+        {
+          "source": "Windows Event Logs (BITS / PowerShell)",
+          "detail": "PowerShell script block logging capturing download cmdlet usage, or BITSAdmin job creation used as an alternate transfer mechanism."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "certutil Used as a Download Utility",
+          "description": "Flags certutil.exe invoked with URL-cache or decode arguments, the documented living-off-the-land download pattern.",
+          "query": "title: certutil Download Utility Abuse\nid: 8d4c6a9e-3f7b-4c2a-9d1e-8d4c6a9e3f80\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n    Image|endswith: '\\certutil.exe'\n    CommandLine|contains:\n      - '-urlcache'\n      - '-URL'\n      - 'decode'\n  condition: selection\nfalsepositives:\n  - Legitimate certificate-management activity by IT/PKI administrators, which should be rare and identifiable by a documented change record\nlevel: high\ntags:\n  - attack.command_and_control\n  - attack.t1105"
+        },
+        {
+          "language": "KQL",
+          "title": "Non-Interactive Process Downloading File to Temp Directory",
+          "description": "Surfaces a web-server or application process (rather than an interactive user session) creating a new executable in a temp directory shortly after outbound HTTP activity, consistent with a web-shell-driven tool transfer.",
+          "query": "DeviceNetworkEvents\n| where InitiatingProcessFileName in (\"w3wp.exe\", \"httpd\", \"nginx\")\n| project ConnTime=Timestamp, DeviceId, InitiatingProcessId\n| join kind=inner (\n    DeviceFileEvents\n    | where FolderPath has_any (@\"\\Temp\\\", \"/tmp/\")\n    | where FileName endswith \".exe\" or FileName endswith \".dll\" or FileName endswith \".sh\"\n) on DeviceId, InitiatingProcessId\n| where Timestamp between (ConnTime .. ConnTime + 5m)\n| project ConnTime, DeviceId, Timestamp, FolderPath, FileName"
+        }
+      ],
+      "false_positives": [
+        "Legitimate certificate-management or PKI administration activity using certutil for its documented purpose",
+        "Approved software deployment and patch-management tooling that legitimately downloads installers via PowerShell or curl/wget",
+        "A web application's own legitimate file-upload or plugin-installation feature being used as designed"
+      ],
+      "response_steps": [
+        "Recover the transferred file for analysis if it's still present, and identify what it did once executed",
+        "Trace the transfer back to its source (C2 domain, cloud storage account, package repository) and block it at the proxy/firewall",
+        "Check for lateral spread of the same tool to other hosts, since this technique frequently precedes or accompanies internal tool propagation",
+        "If a web application or exposed service was the delivery vector (e.g., via a web shell), treat the underlying application vulnerability as the root cause requiring separate remediation"
+      ],
+      "mitigations": [
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Restrict outbound connections from servers and workstations to only known-good repositories and update sources; block direct internet access from systems that don't operationally require it."
+        },
+        {
+          "id": "M1031",
+          "name": "Network Intrusion Prevention",
+          "detail": "Deploy signature and behavioral detection for known download-utility abuse patterns and C2 file-transfer traffic."
+        },
+        {
+          "id": "M1038",
+          "name": "Execution Prevention",
+          "detail": "Apply application control to restrict which processes may invoke certutil, BITSAdmin, or scripting-engine download functions."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1071.001",
+          "name": "Web Protocols",
+          "relation": "The C2 channel this technique's file transfer most commonly rides on top of — the beacon establishes contact, this technique is what actually gets pulled down over it."
+        },
+        {
+          "id": "T1059.001",
+          "name": "PowerShell",
+          "relation": "The most common execution engine used to invoke the download cmdlets (Invoke-WebRequest, DownloadString) that carry out this technique on Windows."
+        }
+      ],
+      "hypothesis": {
+        "statement": "certutil.exe executes with -urlcache or decode arguments, or a non-interactive server process (w3wp.exe, httpd, nginx) creates a new executable in a temp directory within five minutes of outbound HTTP activity.",
+        "rationale": "Pair this hunt directly with any T1071 beaconing hit on the same host -- the two techniques are frequently the same event viewed from two different angles, and treating a confirmed beacon plus a confirmed download from the same host as one incident, not two, better reflects what's actually happening."
+      }
+    }
+  ]
+}

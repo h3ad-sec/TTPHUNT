@@ -1,0 +1,172 @@
+{
+  "id": "T1190",
+  "name": "Exploit Public-Facing Application",
+  "tactic": "TA0001",
+  "tactic_name": "Initial Access",
+  "platforms": [
+    "Windows",
+    "Linux",
+    "macOS",
+    "Containers",
+    "ESXi",
+    "IaaS",
+    "Network Devices"
+  ],
+  "mitre_url": "https://attack.mitre.org/techniques/T1190/",
+  "overview": "This is the other major front door, alongside T1566's phishing coverage already in this tool: rather than tricking a human into clicking something, the adversary exploits a bug, misconfiguration, or unpatched CVE directly in whatever internet-facing software the organization runs — a web application, a VPN gateway, an email server, a database, a network device's management interface. It is, without exaggeration, one of the defining initial-access stories of the last several years: Log4j, ProxyLogon/ProxyShell against Exchange, and a long parade of edge-device CVEs (Citrix ADC, Pulse Secure, FortiGate, Ivanti) have each individually produced mass-exploitation events, and nearly every major APT and ransomware group referenced anywhere in this tool shows up in this pack's procedure examples specifically because a patchable vulnerability sitting on the internet is a lower-effort, higher-success-rate entry point than convincing a human to do anything at all.",
+  "prerequisite_concepts": [
+    {
+      "term": "This is the initial-access technique where patching IS the primary detection strategy",
+      "explanation": "Nearly every named CVE in this pack's procedure examples was patchable well before it was mass-exploited — CVE-2019-19781 (Citrix), CVE-2021-44228 (Log4j), CVE-2021-26855 (ProxyLogon) all had vendor fixes available, frequently for weeks or months, before opportunistic and targeted exploitation caught up. That makes vulnerability and patch management the single highest-leverage control in this entire pack, more than almost any other technique in TTPHUNT — a hunt program here is explicitly a backstop for a patching program, not a replacement for one."
+    },
+    {
+      "term": "The attack chain has a repeatable four-stage shape regardless of which specific CVE is used",
+      "explanation": "An abnormal HTTP/S request or unusual method hits the application, the application responds with an elevated error code or a WAF block, the underlying service process spawns a shell or LOLBin it never should, and that shell reaches out for C2 — this same shape repeats whether the exploited application is IIS, Exchange, a Kubernetes ingress, or a network device's management interface. Detection strategies across the sub-surfaces in this technique all correlate the same three-step pattern (anomalous request, service-process-spawns-shell, outbound callback) rather than needing a unique detection built for every individual CVE."
+    },
+    {
+      "term": "A shell spawned by a service process is almost always the actual tell, not the initial request",
+      "explanation": "The exploit request itself frequently looks like ordinary, if unusual, web traffic and is easy to miss in isolation — but IIS's w3wp.exe, Apache/nginx's worker process, or vCenter's hostd/vpxd process spawning cmd.exe, bash, or PowerShell is something that essentially never happens as part of that service's normal function. That single behavioral fact (a web-facing service process becoming a shell's parent) is the highest-confidence, most durable detection signal in this entire pack, and it holds up regardless of whether the specific CVE involved is one a hunter has ever heard of."
+    }
+  ],
+  "subtechniques": [
+    {
+      "id": "T1190",
+      "name": "Exploit Public-Facing Application",
+      "tactic": "TA0001",
+      "tactic_name": "Initial Access",
+      "platforms": ["Windows", "Linux", "macOS", "Containers", "ESXi", "IaaS", "Network Devices"],
+      "mitre_url": "https://attack.mitre.org/techniques/T1190/",
+      "overview": "Adversaries target software bugs, misconfigurations, or unpatched CVEs in anything internet-facing — web servers (IIS, Apache, Nginx), databases, VPN/gateway appliances (Citrix ADC, Pulse Secure, FortiGate), email servers (Microsoft Exchange, Zimbra), collaboration platforms (SharePoint, Confluence), virtualization infrastructure (VMware vCenter), and network device management protocols (SNMP, Cisco Smart Install) — to gain initial network access with no social engineering required at all. The procedure examples here read like a timeline of the industry's biggest incidents: APT29's exploitation of Citrix, Pulse Secure, and FortiGate CVEs; HAFNIUM's Exchange zero-days; Volt Typhoon's and Salt Typhoon's edge-device campaigns against critical infrastructure; and Magic Hound's and countless ransomware operators' rapid weaponization of Log4j within days of disclosure.",
+      "concepts": [
+        {
+          "term": "Edge devices are now a preferred target precisely because they can't run traditional EDR",
+          "explanation": "VPN gateways, firewalls, and similar appliances run closed, vendor-controlled operating systems that a defender cannot install an EDR agent onto, which means an adversary who compromises one of these devices operates in a genuine visibility blind spot no amount of endpoint tooling elsewhere in the environment can see into. Volt Typhoon's and Salt Typhoon's well-documented targeting of exactly this device category reflects a deliberate strategic choice, not coincidence — these are consistently the quietest possible place to sit inside a network specifically because normal host-based detection has no presence there at all."
+        },
+        {
+          "term": "Container and cloud variants extend this technique past the traditional web server",
+          "explanation": "In a containerized or cloud-hosted environment, the same exploitation pattern can lead not just to a shell on a single host but to direct access to the cloud metadata service (169.254.169.254) — which frequently hands over the temporary credentials the workload itself uses, turning one exploited application into a path toward the surrounding cloud account's IAM permissions. A Kubernetes-specific variant of the same idea shows up as kubectl exec or a sidecar spawning immediately following an ingress anomaly, which is why this pack's detection queries explicitly include a metadata-service-access check alongside the more traditional shell-spawn pattern."
+        },
+        {
+          "term": "Time-to-exploitation has compressed from months to days, and detection timelines have to match",
+          "explanation": "Log4j and several of the edge-device CVEs referenced in this pack's procedure examples saw mass opportunistic scanning and exploitation within days of public disclosure — sometimes before a patch was even available, based on proof-of-concept code circulating publicly. That compression means the traditional 30/60/90-day patch cycle many vulnerability management programs are built around is now frequently too slow on its own for internet-facing systems specifically, which is exactly why this pack's mitigation list leads with rapid response to critical disclosures rather than routine patch cadence alone."
+        }
+      ],
+      "procedure_examples": [
+        {
+          "actor": "APT29",
+          "activity": "Exploited CVE-2019-19781 (Citrix ADC), CVE-2019-11510 (Pulse Secure), CVE-2018-13379 (FortiGate), and CVE-2019-9670 (Zimbra) for initial access across multiple campaigns."
+        },
+        {
+          "actor": "HAFNIUM",
+          "activity": "Exploited multiple Microsoft Exchange zero-day vulnerabilities (ProxyLogon) for both on-premises and edge-device compromise at scale."
+        },
+        {
+          "actor": "Volt Typhoon",
+          "activity": "Gained initial access to critical infrastructure targets through vulnerabilities in Fortinet, Ivanti, NETGEAR, Citrix, and Cisco appliances."
+        },
+        {
+          "actor": "Salt Typhoon",
+          "activity": "Exploited CVE-2018-0171 in Cisco's Smart Install feature to gain access to telecommunications infrastructure."
+        },
+        {
+          "actor": "Magic Hound",
+          "activity": "Exploited CVE-2021-44228 (Log4j) and ProxyShell variants as part of a broader espionage-focused initial-access campaign."
+        },
+        {
+          "actor": "Play Ransomware",
+          "activity": "Exploited CVE-2018-13379 and CVE-2020-12812 (FortiOS) alongside CVE-2022-41040/41082 (Exchange ProxyNotShell) for initial access ahead of ransomware deployment."
+        }
+      ],
+      "data_sources": [
+        {
+          "source": "Web server / WAF logs (IIS, Apache, Nginx)",
+          "detail": "Abnormal HTTP methods, malformed requests, or a spike in 4xx/5xx error responses against a specific endpoint, especially correlated with the web service process subsequently spawning a shell."
+        },
+        {
+          "source": "Sysmon 1 / process telemetry",
+          "detail": "w3wp.exe, httpd, nginx, or an equivalent web-facing service process spawning cmd.exe, powershell.exe, bash, or /bin/sh as a direct child process — one of the highest-confidence single signals in this entire pack."
+        },
+        {
+          "source": "Cloud/container audit logs",
+          "detail": "Metadata service (169.254.169.254) access attempts from a workload process immediately following an ingress anomaly, or kubectl exec / sidecar spawn events correlated with abnormal ingress traffic."
+        },
+        {
+          "source": "Network device syslog",
+          "detail": "SNMP or Smart Install anomalous input correlated with a CLI spawn or unexpected configuration change on the device."
+        },
+        {
+          "source": "ESXi/vCenter logs",
+          "detail": "OpenSLP service errors or restarts, or hostd/vpxd process anomalies correlated with unexpected datastore access changes."
+        }
+      ],
+      "detection_queries": [
+        {
+          "language": "Sigma",
+          "title": "Web Server Process Spawning Command Interpreter",
+          "description": "Flags a web-facing service process (IIS, Apache, Nginx) directly spawning a shell or scripting engine, the highest-confidence single signature for successful exploitation of a public-facing application.",
+          "query": "title: Web Service Spawning Shell\nid: 6a9d3c7e-8f4b-4c2a-9d1e-6a9d3c7e8f80\nstatus: stable\nauthor: H3AD-SEC Detection Engineering\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection_parent:\n    ParentImage|endswith:\n      - '\\w3wp.exe'\n      - '\\httpd.exe'\n      - '\\nginx.exe'\n  selection_child:\n    Image|endswith:\n      - '\\cmd.exe'\n      - '\\powershell.exe'\n  condition: selection_parent and selection_child\nfalsepositives:\n  - Legitimate web-application functionality that intentionally shells out to a helper script or utility as part of its designed behavior\nlevel: critical\ntags:\n  - attack.initial_access\n  - attack.t1190"
+        },
+        {
+          "language": "KQL",
+          "title": "Cloud Workload Metadata Service Access Following Ingress Anomaly",
+          "description": "Correlates a spike in ALB/ELB error responses with subsequent metadata-service access from the same workload, consistent with a successful exploit pivoting toward cloud credential theft.",
+          "query": "AzureDiagnostics\n| where Category == \"ApplicationGatewayAccessLog\" and httpStatus_d >= 400\n| summarize ErrorCount = count() by bin(TimeGenerated, 5m), backendPoolName_s\n| where ErrorCount > 20\n| join kind=inner (\n    AzureDiagnostics\n    | where Category == \"WorkloadMetadataAccess\"\n) on backendPoolName_s\n| project TimeGenerated, backendPoolName_s, ErrorCount"
+        }
+      ],
+      "false_positives": [
+        "Legitimate web-application functionality that intentionally shells out to a local script or utility as part of its designed, documented behavior",
+        "Approved vulnerability scanning or penetration testing generating error-response spikes against the same application",
+        "Legitimate workload metadata access by an application that genuinely needs to retrieve its own instance credentials as part of normal operation"
+      ],
+      "response_steps": [
+        "Isolate the exploited application/host immediately and preserve web server logs, since they're frequently the only record of the initial exploit request itself",
+        "Identify the specific vulnerability or misconfiguration exploited and confirm whether a patch was available and how long it had been outstanding",
+        "Assume any credentials or tokens accessible to the exploited application's service account are compromised, especially in cloud/container environments where metadata-service access may have occurred",
+        "Check for lateral movement or ingress tool transfer originating from the compromised application host, since initial access via this technique is rarely the end objective on its own"
+      ],
+      "mitigations": [
+        {
+          "id": "M1051",
+          "name": "Update Software",
+          "detail": "Maintain rapid patch management specifically for internet-facing applications, with an accelerated response process for critical vulnerability disclosures rather than relying on routine patch cadence alone."
+        },
+        {
+          "id": "M1016",
+          "name": "Vulnerability Scanning",
+          "detail": "Regularly scan internet-facing systems and maintain an automated discovery process for newly-exposed services."
+        },
+        {
+          "id": "M1030",
+          "name": "Network Segmentation",
+          "detail": "Isolate public-facing servers in a DMZ, separate from internal infrastructure, to limit the blast radius of a successful exploit."
+        },
+        {
+          "id": "M1035",
+          "name": "Limit Access to Resource Over Network",
+          "detail": "Restrict public exposure to only the specific services genuinely intended for external use; move administrative interfaces off the public internet entirely."
+        },
+        {
+          "id": "M1037",
+          "name": "Filter Network Traffic",
+          "detail": "Deploy a Web Application Firewall to block known exploit patterns before they reach the application, and restrict outbound connections from public-facing servers to prevent post-exploit callback."
+        }
+      ],
+      "related": [
+        {
+          "id": "T1105",
+          "name": "Ingress Tool Transfer",
+          "relation": "The near-universal next step once a public-facing application is successfully exploited — pulling in the adversary's actual toolkit through the newly-obtained shell."
+        },
+        {
+          "id": "T1059.013",
+          "name": "Container CLI/API",
+          "relation": "Shares the containerized-environment variant of this technique, where exploitation of an ingress-exposed application leads directly into container/Kubernetes API abuse."
+        }
+      ],
+      "hypothesis": {
+        "statement": "A web-facing service process (w3wp.exe, httpd, nginx) spawns a command interpreter or scripting engine as a direct child process, or a cloud workload accesses its instance metadata service within minutes of an unusual spike in HTTP error responses.",
+        "rationale": "Anchor detection on the shell-spawn behavior rather than any specific CVE signature -- the exploited vulnerability changes with every disclosure cycle, but a web service process becoming a shell's parent is a stable, durable signature that holds up regardless of which specific bug was used to get there."
+      }
+    }
+  ]
+}
